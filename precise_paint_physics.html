@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Slip-Based Dynamic Paint with Continuous Vector Field</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body { height: 100%; margin: 0; background: linear-gradient(180deg, #0a0a0a 0%, #1a1a2e 50%, #16213e 100%); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; color: #fff; overflow: hidden; }
+    #loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 24px; z-index: 1000; }
+    #ui { position: fixed; top: 20px; left: 20px; display: flex; flex-direction: column; gap: 12px; z-index: 100; max-width: 340px; }
+    .ui-group { background: rgba(0,0,0,0.85); backdrop-filter: blur(10px); border-radius: 12px; padding: 14px; border: 1px solid rgba(255,255,255,0.1); }
+    .ui-title { font-size: 11px; font-weight: bold; margin-bottom: 10px; color: #00ff88; text-transform: uppercase; letter-spacing: 1.5px; }
+    button { width: 100%; padding: 10px; border: 0; border-radius: 8px; background: linear-gradient(135deg, #00ff88 0%, #00ccff 100%); color: #000; cursor: pointer; font-weight: 600; transition: all 0.3s; margin-bottom: 6px; font-size: 13px; }
+    button:hover { transform: translateY(-2px) scale(1.02); box-shadow: 0 5px 20px rgba(0, 255, 136, 0.4); }
+    button.secondary { background: rgba(255,255,255,0.1); color: #fff; }
+    button.secondary:hover { background: rgba(255,255,255,0.2); }
+    button.active { background: linear-gradient(135deg, #ff0055 0%, #ff9a00 100%); color: #fff; }
+    button.export { background: linear-gradient(135deg, #9333ea 0%, #4f46e5 100%); color: #fff; }
+    .slider-container { margin: 10px 0; }
+    .slider-label { font-size: 11px; margin-bottom: 6px; display: flex; justify-content: space-between; color: #00ff88; }
+    input[type="range"] { width: 100%; height: 6px; border-radius: 3px; background: rgba(0,255,136,0.2); outline: none; -webkit-appearance: none; }
+    input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #00ff88; cursor: pointer; box-shadow: 0 0 10px rgba(0,255,136,0.5); }
+    input[type="range"]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #00ff88; cursor: pointer; border: none; box-shadow: 0 0 10px rgba(0,255,136,0.5); }
+    select { width: 100%; padding: 8px; border: 1px solid rgba(0,255,136,0.3); border-radius: 6px; background: rgba(0,0,0,0.8); color: #00ff88; font-size: 12px; margin-bottom: 8px; }
+    #info { position: fixed; bottom: 20px; left: 20px; background: rgba(0,0,0,0.85); padding: 16px; border-radius: 12px; font-size: 12px; backdrop-filter: blur(10px); max-width: 560px; border: 1px solid rgba(0,255,136,0.2); }
+    #stats { position: fixed; top: 20px; right: 20px; background: rgba(0,0,0,0.85); padding: 16px; border-radius: 12px; font-size: 12px; backdrop-filter: blur(10px); border: 1px solid rgba(0,255,136,0.2); min-width: 200px; }
+    .stat-item { display: flex; justify-content: space-between; margin: 6px 0; }
+    .stat-label { color: #00ff88; }
+    .stat-value { font-weight: bold; color: #00ccff; }
+    canvas { display: block; }
+    #exportNotification {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      background: linear-gradient(135deg, #00ff88 0%, #00ccff 100%);
+      color: #000; padding: 20px 30px; border-radius: 12px;
+      font-weight: bold; z-index: 2000; display: none;
+      box-shadow: 0 10px 40px rgba(0,255,136,0.5);
+    }
+  </style>
+</head>
+<body>
+  <div id="loading">Loading Physics Engine...</div>
+  <div id="exportNotification">Export Complete!</div>
+
+  <div id="ui" style="display:none;">
+    <div class="ui-group">
+      <div class="ui-title">🎯 Drop Objects</div>
+      <button id="dropSphere">Sphere</button>
+      <button id="dropBox">Box</button>
+      <button id="dropCylinder">Cylinder</button>
+      <button id="dropCone">Cone</button>
+      <button id="dropTorus">Torus</button>
+      <button id="dropCompound">Compound</button>
+    </div>
+
+    <div class="ui-group">
+      <div class="ui-title">⚙️ Physics</div>
+      <div class="slider-container"><div class="slider-label"><span>Restitution</span><span id="restitutionValue">0.3</span></div><input type="range" id="restitutionSlider" min="0" max="100" value="30"></div>
+      <div class="slider-container"><div class="slider-label"><span>Friction</span><span id="frictionValue">0.5</span></div><input type="range" id="frictionSlider" min="0" max="100" value="50"></div>
+      <div class="slider-container"><div class="slider-label"><span>Gravity</span><span id="gravityValue">9.8</span></div><input type="range" id="gravitySlider" min="0" max="300" value="98"></div>
+    </div>
+
+    <div class="ui-group">
+      <div class="ui-title">🖌️ Slip-Based Paint</div>
+      <button id="togglePaint" class="active">Paint Mode: ON</button>
+      <button id="toggleVector" class="active">Vector Field: ON</button>
+      <button id="toggleHull" class="active">Hull Patches: ON</button>
+      <button id="togglePerf" class="active">Performance: Economy</button>
+      
+      <select id="paintMode">
+        <option value="gaussian">Gaussian Blur</option>
+        <option value="quad">Quad Falloff</option>
+        <option value="radial">Radial Gradient</option>
+      </select>
+      
+      <div class="slider-container"><div class="slider-label"><span>Slip Threshold</span><span id="slipThresholdValue">0.05</span></div><input type="range" id="slipThreshold" min="1" max="100" value="5"></div>
+      <div class="slider-container"><div class="slider-label"><span>Paint Intensity</span><span id="paintIntensityValue">1.0</span></div><input type="range" id="paintIntensity" min="10" max="300" value="100"></div>
+      <div class="slider-container"><div class="slider-label"><span>Vector Strength</span><span id="vectorStrengthValue">1.0</span></div><input type="range" id="vectorStrength" min="10" max="300" value="100"></div>
+      <div class="slider-container"><div class="slider-label"><span>Contact Reduction</span><span id="contactReductionValue">2</span></div><input type="range" id="contactReduction" min="1" max="10" value="2"></div>
+      
+      <button id="clearPaint" class="secondary">Clear Paint</button>
+      <button id="reset" class="secondary">Reset All</button>
+    </div>
+
+    <div class="ui-group">
+      <div class="ui-title">💾 Export</div>
+      <button id="exportPaint" class="export">Export Paint (PNG)</button>
+      <button id="exportVector" class="export">Export Vector Field (PNG)</button>
+      <button id="exportData" class="export">Export Data (JSON)</button>
+    </div>
+  </div>
+
+  <div id="info" style="display:none;">
+    ⚡ <b>Slip-Based Dynamic Paint System</b><br>
+    • Only paints when objects have velocity and slip<br>
+    • Continuous vector field with directional reinforcement<br>
+    • Friction-based paint intensity with gaussian/quad/radial modes<br>
+    • Smoothstep interpolation for optimal performance
+  </div>
+
+  <div id="stats" style="display:none;">
+    <div class="stat-item"><span class="stat-label">Bodies:</span><span class="stat-value" id="bodyCount">0</span></div>
+    <div class="stat-item"><span class="stat-label">Active Contacts:</span><span class="stat-value" id="contactCount">0</span></div>
+    <div class="stat-item"><span class="stat-label">Paint Points:</span><span class="stat-value" id="paintCount">0</span></div>
+    <div class="stat-item"><span class="stat-label">Vector Cells:</span><span class="stat-value" id="vectorCount">0</span></div>
+    <div class="stat-item"><span class="stat-label">FPS:</span><span class="stat-value" id="fps">60</span></div>
+    <div class="stat-item"><span class="stat-label">Physics Hz:</span><span class="stat-value" id="physicsHz">0</span></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/gh/kripken/ammo.js@main/builds/ammo.js"></script>
+  <script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }</script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
+
+    Ammo().then(function(Ammo) {
+      // Configuration
+      let paintEnabled = true, vectorFieldEnabled = true, hullPatchEnabled = true;
+      let performanceMode = 'economy'; // 'economy' or 'rich'
+      let paintMode = 'gaussian'; // 'gaussian', 'quad', 'radial'
+      let SLIP_THRESHOLD = 0.05;
+      let PAINT_INTENSITY = 1.0;
+      let VECTOR_STRENGTH = 1.0;
+      let CONTACT_REDUCTION = 2; // Skip every N contacts for performance
+      
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('ui').style.display = 'flex';
+      document.getElementById('info').style.display = 'block';
+      document.getElementById('stats').style.display = 'block';
+
+      // Physics setup
+      const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
+      const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
+      const overlappingPairCache = new Ammo.btDbvtBroadphase();
+      const solver = new Ammo.btSequentialImpulseConstraintSolver();
+      const physicsWorld = new Ammo.btDiscreteDynamicsWorld(dispatcher, overlappingPairCache, solver, collisionConfiguration);
+      physicsWorld.setGravity(new Ammo.btVector3(0, -9.8, 0));
+
+      // Three.js setup
+      const renderer = new THREE.WebGLRenderer({ antialias: performanceMode === 'rich', preserveDrawingBuffer: true });
+      renderer.setPixelRatio(performanceMode === 'rich' ? window.devicePixelRatio : 1);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = performanceMode === 'rich';
+      renderer.shadowMap.type = performanceMode === 'rich' ? THREE.PCFSoftShadowMap : THREE.BasicShadowMap;
+      document.body.appendChild(renderer.domElement);
+
+      const scene = new THREE.Scene();
+      scene.fog = new THREE.Fog(0x16213e, 20, 80);
+
+      const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(15, 12, 15);
+      camera.lookAt(0, 0, 0);
+
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      controls.maxPolarAngle = Math.PI * 0.49;
+      controls.minDistance = 5;
+      controls.maxDistance = 50;
+
+      // Lighting
+      scene.add(new THREE.AmbientLight(0x404040, 0.6));
+      const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+      dirLight.position.set(10, 20, 10);
+      dirLight.castShadow = performanceMode === 'rich';
+      dirLight.shadow.camera.near = 0.1;
+      dirLight.shadow.camera.far = 60;
+      dirLight.shadow.camera.left = -25;
+      dirLight.shadow.camera.right = 25;
+      dirLight.shadow.camera.top = 25;
+      dirLight.shadow.camera.bottom = -25;
+      dirLight.shadow.mapSize.set(performanceMode === 'rich' ? 2048 : 1024, performanceMode === 'rich' ? 2048 : 1024);
+      scene.add(dirLight);
+
+      const colors = [0x00ff88, 0x00ccff, 0xff0055, 0xffaa00, 0xff00ff, 0x88ff00, 0x0088ff, 0xff8800, 0x8800ff, 0xffff00];
+      let physicsParams = { restitution: 0.3, friction: 0.5 };
+
+      const rigidBodies = [];
+      const tmpTrans = new Ammo.btTransform();
+      const decalsGroup = new THREE.Group();
+      scene.add(decalsGroup);
+
+      let totalPaintPoints = 0;
+      let activeVectorCells = 0;
+      let physicsSteps = 0;
+      let contactCounter = 0;
+
+      // Ground setup
+      const groundSize = 50;
+      const groundGeo = new THREE.BoxGeometry(groundSize, 2, groundSize);
+      const groundMat = new THREE.MeshStandardMaterial({ color: 0x1a1a2e, roughness: 0.9, metalness: 0.0 });
+      const groundMesh = new THREE.Mesh(groundGeo, groundMat);
+      groundMesh.position.y = -1;
+      groundMesh.receiveShadow = performanceMode === 'rich';
+      scene.add(groundMesh);
+
+      const grid = new THREE.GridHelper(groundSize, 50, 0x00ff88, 0x003344);
+      grid.position.y = 0.005;
+      scene.add(grid);
+
+      // Paint canvas with configurable resolution
+      const PAINT_RES = performanceMode === 'rich' ? 2048 : 1024;
+      const paintCanvas = document.createElement('canvas');
+      paintCanvas.width = PAINT_RES;
+      paintCanvas.height = PAINT_RES;
+      const paintCtx = paintCanvas.getContext('2d', { willReadFrequently: false });
+      paintCtx.clearRect(0, 0, PAINT_RES, PAINT_RES);
+
+      const paintTex = new THREE.CanvasTexture(paintCanvas);
+      paintTex.flipY = true;
+      paintTex.wrapS = paintTex.wrapT = THREE.ClampToEdgeWrapping;
+      paintTex.needsUpdate = true;
+
+      const paintPlane = new THREE.Mesh(
+        new THREE.PlaneGeometry(groundSize, groundSize),
+        new THREE.MeshBasicMaterial({ map: paintTex, transparent: true, depthWrite: false })
+      );
+      paintPlane.rotation.x = -Math.PI / 2;
+      paintPlane.position.y = 0.011;
+      scene.add(paintPlane);
+
+      // Vector field data structure with directional reinforcement
+      const VECTOR_GRID = performanceMode === 'rich' ? 64 : 32;
+      const vectorField = new Float32Array(VECTOR_GRID * VECTOR_GRID * 5); // [vx, vz, strength, forward_passes, opposite_passes]
+      const vectorCanvas = document.createElement('canvas');
+      vectorCanvas.width = 512;
+      vectorCanvas.height = 512;
+      const vectorCtx = vectorCanvas.getContext('2d');
+
+      // Ground physics body
+      const groundShape = new Ammo.btBoxShape(new Ammo.btVector3(groundSize / 2, 1, groundSize / 2));
+      const groundTransform = new Ammo.btTransform();
+      groundTransform.setIdentity();
+      groundTransform.setOrigin(new Ammo.btVector3(0, -1, 0));
+      const groundMotionState = new Ammo.btDefaultMotionState(groundTransform);
+      const groundRbInfo = new Ammo.btRigidBodyConstructionInfo(0, groundMotionState, groundShape, new Ammo.btVector3(0, 0, 0));
+      groundRbInfo.set_m_restitution(0.3);
+      groundRbInfo.set_m_friction(0.5);
+      const groundBody = new Ammo.btRigidBody(groundRbInfo);
+      physicsWorld.addRigidBody(groundBody);
+      groundMesh.userData.physicsBody = groundBody;
+
+      // Contact history for smoothstep interpolation
+      const contactHistory = new Map();
+      const manifoldBuckets = new Map();
+
+      // Smoothstep function for interpolation
+      function smoothstep(edge0, edge1, x) {
+        const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+        return t * t * (3 - 2 * t);
+      }
+
+      // Compute slip velocity for friction-based painting
+      function computeSlipVelocity(body, contactPoint, normal) {
+        const v = body.getLinearVelocity();
+        const w = body.getAngularVelocity();
+        body.getMotionState().getWorldTransform(tmpTrans);
+        const pos = tmpTrans.getOrigin();
+        
+        const r = new THREE.Vector3(
+          contactPoint.x - pos.x(),
+          contactPoint.y - pos.y(),
+          contactPoint.z - pos.z()
+        );
+        
+        // Contact velocity = linear velocity + angular velocity × radius
+        const contactVel = new THREE.Vector3(
+          v.x() + w.y() * r.z - w.z() * r.y,
+          v.y() + w.z() * r.x - w.x() * r.z,
+          v.z() + w.x() * r.y - w.y() * r.x
+        );
+        
+        // Project onto tangent plane (slip velocity)
+        const normalVel = normal.clone().multiplyScalar(contactVel.dot(normal));
+        const slipVel = contactVel.clone().sub(normalVel);
+        
+        return slipVel;
+      }
+
+      // Paint functions with different modes
+      function drawGaussianPaint(worldPoint, radius, opacity, color, velocity) {
+        const u = THREE.MathUtils.clamp((worldPoint.x + groundSize / 2) / groundSize, 0, 1);
+        const v = THREE.MathUtils.clamp((worldPoint.z + groundSize / 2) / groundSize, 0, 1);
+        const px = u * PAINT_RES;
+        const py = v * PAINT_RES;
+        const rpx = Math.max(1, (radius / groundSize) * PAINT_RES);
+
+        const c = new THREE.Color(color);
+        
+        // Gaussian blur effect
+        paintCtx.save();
+        paintCtx.globalCompositeOperation = 'lighter';
+        paintCtx.filter = `blur(${rpx * 0.3}px)`;
+        
+        const g = paintCtx.createRadialGradient(px, py, 0, px, py, rpx * 0.6);
+        g.addColorStop(0, `rgba(${(c.r * 255) | 0},${(c.g * 255) | 0},${(c.b * 255) | 0},${opacity})`);
+        g.addColorStop(0.4, `rgba(${(c.r * 255) | 0},${(c.g * 255) | 0},${(c.b * 255) | 0},${opacity * 0.6})`);
+        g.addColorStop(1, `rgba(${(c.r * 255) | 0},${(c.g * 255) | 0},${(c.b * 255) | 0},0)`);
+        
+        paintCtx.fillStyle = g;
+        paintCtx.beginPath();
+        paintCtx.arc(px, py, rpx, 0, Math.PI * 2);
+        paintCtx.fill();
+        paintCtx.restore();
+        
+        paintTex.needsUpdate = true;
+        totalPaintPoints++;
+      }
+
+      function drawQuadPaint(worldPoint, radius, opacity, color, velocity) {
+        const u = THREE.MathUtils.clamp((worldPoint.x + groundSize / 2) / groundSize, 0, 1);
+        const v = THREE.MathUtils.clamp((worldPoint.z + groundSize / 2) / groundSize, 0, 1);
+        const px = u * PAINT_RES;
+        const py = v * PAINT_RES;
+        const size = Math.max(2, (radius / groundSize) * PAINT_RES * 2);
+
+        const c = new THREE.Color(color);
+        
+        // Quad with smooth edges
+        paintCtx.globalCompositeOperation = 'lighter';
+        
+        for (let i = 0; i < 3; i++) {
+          const factor = 1 - i * 0.3;
+          const currentSize = size * factor;
+          const currentOpacity = opacity * (1 - i * 0.35);
+          
+          paintCtx.fillStyle = `rgba(${(c.r * 255) | 0},${(c.g * 255) | 0},${(c.b * 255) | 0},${currentOpacity})`;
+          paintCtx.fillRect(px - currentSize / 2, py - currentSize / 2, currentSize, currentSize);
+        }
+        
+        paintTex.needsUpdate = true;
+        totalPaintPoints++;
+      }
+
+      function drawRadialPaint(worldPoint, radius, opacity, color, velocity) {
+        drawGaussianPaint(worldPoint, radius, opacity, color, velocity); // Fallback to gaussian for radial
+      }
+
+      // Update vector field with directional reinforcement
+      function updateVectorField(worldPoint, velocity, impulse) {
+        if (!vectorFieldEnabled || velocity.length() < SLIP_THRESHOLD) return;
+        
+        const u = THREE.MathUtils.clamp((worldPoint.x + groundSize / 2) / groundSize, 0, 1);
+        const v = THREE.MathUtils.clamp((worldPoint.z + groundSize / 2) / groundSize, 0, 1);
+        const i = Math.floor(u * (VECTOR_GRID - 1));
+        const j = Math.floor(v * (VECTOR_GRID - 1));
+        const idx = (j * VECTOR_GRID + i) * 5;
+        
+        const currentVx = vectorField[idx];
+        const currentVz = vectorField[idx + 1];
+        const currentStrength = vectorField[idx + 2];
+        const forwardPasses = vectorField[idx + 3];
+        const oppositePasses = vectorField[idx + 4];
+        
+        // Calculate direction similarity
+        const currentDir = new THREE.Vector2(currentVx, currentVz).normalize();
+        const newDir = new THREE.Vector2(velocity.x, velocity.z).normalize();
+        const similarity = currentDir.dot(newDir);
+        
+        const weight = VECTOR_STRENGTH * impulse * 0.1;
+        
+        if (similarity > 0.7) {
+          // Same direction - reinforce
+          const multiplier = 1 + forwardPasses * 0.5;
+          vectorField[idx] += velocity.x * weight * multiplier;
+          vectorField[idx + 1] += velocity.z * weight * multiplier;
+          vectorField[idx + 2] = Math.min(3, currentStrength + weight * multiplier);
+          vectorField[idx + 3] = Math.min(5, forwardPasses + 1);
+        } else if (similarity < -0.7) {
+          // Opposite direction - counter
+          const multiplier = 1 + oppositePasses * 0.5;
+          vectorField[idx] -= velocity.x * weight * multiplier;
+          vectorField[idx + 1] -= velocity.z * weight * multiplier;
+          vectorField[idx + 2] = Math.min(3, currentStrength + weight * multiplier);
+          vectorField[idx + 4] = Math.min(5, oppositePasses + 1);
+        } else {
+          // New direction - reset
+          vectorField[idx] = velocity.x * weight;
+          vectorField[idx + 1] = velocity.z * weight;
+          vectorField[idx + 2] = weight;
+          vectorField[idx + 3] = 1;
+          vectorField[idx + 4] = 0;
+        }
+        
+        activeVectorCells++;
+      }
+
+      // Render vector field visualization
+      function renderVectorField() {
+        vectorCtx.clearRect(0, 0, 512, 512);
+        
+        for (let j = 0; j < VECTOR_GRID; j++) {
+          for (let i = 0; i < VECTOR_GRID; i++) {
+            const idx = (j * VECTOR_GRID + i) * 5;
+            const vx = vectorField[idx];
+            const vz = vectorField[idx + 1];
+            const strength = vectorField[idx + 2];
+            const forwardPasses = vectorField[idx + 3];
+            const oppositePasses = vectorField[idx + 4];
+            
+            if (strength < 0.01) continue;
+            
+            const speed = Math.hypot(vx, vz);
+            if (speed < 0.01) continue;
+            
+            const cx = (i + 0.5) / VECTOR_GRID * 512;
+            const cy = (j + 0.5) / VECTOR_GRID * 512;
+            const scale = Math.min(15, speed * 30);
+            const ex = cx + (vx / speed) * scale;
+            const ey = cy + (vz / speed) * scale;
+            
+            // Color based on direction dominance
+            let hue;
+            if (forwardPasses > oppositePasses) {
+              hue = 0; // Red for forward
+            } else if (oppositePasses > forwardPasses) {
+              hue = 200; // Blue for opposite
+            } else {
+              hue = 60; // Yellow for neutral
+            }
+            
+            const opacity = Math.min(1, 0.3 + strength * 0.3);
+            
+            vectorCtx.strokeStyle = `hsla(${hue}, 90%, 55%, ${opacity})`;
+            vectorCtx.lineWidth = 2;
+            vectorCtx.lineCap = 'round';
+            vectorCtx.beginPath();
+            vectorCtx.moveTo(cx, cy);
+            vectorCtx.lineTo(ex, ey);
+            vectorCtx.stroke();
+            
+            // Arrow head
+            const angle = Math.atan2(vz, vx);
+            vectorCtx.save();
+            vectorCtx.translate(ex, ey);
+            vectorCtx.rotate(angle);
+            vectorCtx.beginPath();
+            vectorCtx.moveTo(0, 0);
+            vectorCtx.lineTo(-5, -3);
+            vectorCtx.moveTo(0, 0);
+            vectorCtx.lineTo(-5, 3);
+            vectorCtx.stroke();
+            vectorCtx.restore();
+          }
+        }
+      }
+
+      // Hull patch painting
+      function paintHullPatch(points, normal, color, penetration) {
+        if (!hullPatchEnabled || points.length < 3) return;
+        
+        // Simple bounding box approach for performance
+        let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+        for (const p of points) {
+          minX = Math.min(minX, p.x);
+          maxX = Math.max(maxX, p.x);
+          minZ = Math.min(minZ, p.z);
+          maxZ = Math.max(maxZ, p.z);
+        }
+        
+        const center = new THREE.Vector3((minX + maxX) / 2, 0, (minZ + maxZ) / 2);
+        const width = maxX - minX;
+        const height = maxZ - minZ;
+        const radius = Math.max(width, height) * 0.5;
+        
+        if (paintMode === 'gaussian') {
+          drawGaussianPaint(center, radius, 0.6, color, new THREE.Vector3());
+        } else if (paintMode === 'quad') {
+          drawQuadPaint(center, radius, 0.6, color, new THREE.Vector3());
+        } else {
+          drawRadialPaint(center, radius, 0.6, color, new THREE.Vector3());
+        }
+      }
+
+      // Process contacts with slip-based painting
+      function processContacts() {
+        const numManifolds = dispatcher.getNumManifolds();
+        const now = performance.now();
+        let activeContacts = 0;
+        
+        for (let i = 0; i < numManifolds; i++) {
+          const manifold = dispatcher.getManifoldByIndexInternal(i);
+          const body0 = Ammo.castObject(manifold.getBody0(), Ammo.btRigidBody);
+          const body1 = Ammo.castObject(manifold.getBody1(), Ammo.btRigidBody);
+          const numContacts = manifold.getNumContacts();
+          
+          let mesh0 = null, mesh1 = null;
+          for (const rb of rigidBodies) {
+            if (rb.userData.physicsBody === body0) mesh0 = rb;
+            if (rb.userData.physicsBody === body1) mesh1 = rb;
+          }
+          if (groundMesh.userData.physicsBody === body0) mesh0 = groundMesh;
+          if (groundMesh.userData.physicsBody === body1) mesh1 = groundMesh;
+          if (!mesh0 || !mesh1) continue;
+          
+          for (let j = 0; j < numContacts; j++) {
+            // Contact reduction for performance
+            contactCounter++;
+            if (contactCounter % CONTACT_REDUCTION !== 0 && performanceMode === 'economy') continue;
+            
+            const cp = manifold.getContactPoint(j);
+            const distance = cp.getDistance();
+            
+            if (distance < 0.01) {
+              const ptA = cp.getPositionWorldOnA();
+              const ptB = cp.getPositionWorldOnB();
+              const nB = cp.get_m_normalWorldOnB();
+              const impulse = cp.getAppliedImpulse();
+              
+              const paintOn1 = (mesh0 !== groundMesh);
+              const point = new THREE.Vector3(
+                paintOn1 ? ptB.x() : ptA.x(),
+                paintOn1 ? ptB.y() : ptA.y(),
+                paintOn1 ? ptB.z() : ptA.z()
+              );
+              const normal = new THREE.Vector3(nB.x(), nB.y(), nB.z());
+              const dynamicBody = paintOn1 ? body0 : body1;
+              const dynamicMesh = paintOn1 ? mesh0 : mesh1;
+              const surfaceMesh = paintOn1 ? mesh1 : mesh0;
+              
+              // Calculate slip velocity
+              const slipVel = computeSlipVelocity(dynamicBody, point, normal);
+              const slipSpeed = slipVel.length();
+              
+              // Only paint if there's significant slip
+              if (slipSpeed > SLIP_THRESHOLD && paintEnabled && surfaceMesh === groundMesh) {
+                // Slip-based intensity
+                const intensity = smoothstep(SLIP_THRESHOLD, SLIP_THRESHOLD * 10, slipSpeed);
+                const radius = THREE.MathUtils.clamp(0.08 + slipSpeed * 0.02, 0.05, 0.4);
+                const opacity = intensity * PAINT_INTENSITY * THREE.MathUtils.clamp(impulse * 0.1, 0.2, 1.0);
+                
+                // Use selected paint mode
+                if (paintMode === 'gaussian') {
+                  drawGaussianPaint(point, radius, opacity, dynamicMesh.userData.color || 0x00ff88, slipVel);
+                } else if (paintMode === 'quad') {
+                  drawQuadPaint(point, radius, opacity, dynamicMesh.userData.color || 0x00ff88, slipVel);
+                } else {
+                  drawRadialPaint(point, radius, opacity, dynamicMesh.userData.color || 0x00ff88, slipVel);
+                }
+                
+                // Update vector field
+                updateVectorField(point, slipVel, impulse);
+                
+                activeContacts++;
+              }
+              
+              // Hull patch accumulation
+              if (hullPatchEnabled) {
+                const dynPtr = Ammo.getPointer(dynamicBody);
+                const surfPtr = Ammo.getPointer(surfaceMesh.userData.physicsBody);
+                const key = `${dynPtr}|${surfPtr}`;
+                
+                if (!manifoldBuckets.has(key)) {
+                  manifoldBuckets.set(key, {
+                    t0: now,
+                    pts: [],
+                    normal: normal.clone(),
+                    color: dynamicMesh.userData.color || 0x00ff88,
+                    maxPen: 0
+                  });
+                }
+                
+                const bucket = manifoldBuckets.get(key);
+                bucket.pts.push(point.clone());
+                if (distance < 0) bucket.maxPen = Math.max(bucket.maxPen, -distance);
+              }
+            }
+          }
+        }
+        
+        // Process hull patches
+        for (const [key, bucket] of manifoldBuckets) {
+          if (now - bucket.t0 >= 100) {
+            if (bucket.pts.length >= 3) {
+              paintHullPatch(bucket.pts, bucket.normal, bucket.color, bucket.maxPen);
+            }
+            manifoldBuckets.delete(key);
+          }
+        }
+        
+        return activeContacts;
+      }
+
+      // Create rigid body
+      function createRigidBody(mesh, shape, mass, pos, quat) {
+        const transform = new Ammo.btTransform();
+        transform.setIdentity();
+        transform.setOrigin(new Ammo.btVector3(pos.x, pos.y, pos.z));
+        transform.setRotation(new Ammo.btQuaternion(quat.x, quat.y, quat.z, quat.w));
+        const motionState = new Ammo.btDefaultMotionState(transform);
+        const localInertia = new Ammo.btVector3(0, 0, 0);
+        shape.calculateLocalInertia(mass, localInertia);
+        const rbInfo = new Ammo.btRigidBodyConstructionInfo(mass, motionState, shape, localInertia);
+        rbInfo.set_m_restitution(physicsParams.restitution);
+        rbInfo.set_m_friction(physicsParams.friction);
+        const body = new Ammo.btRigidBody(rbInfo);
+        body.setActivationState(4);
+        mesh.userData.physicsBody = body;
+        scene.add(mesh);
+        physicsWorld.addRigidBody(body);
+        rigidBodies.push(mesh);
+        return body;
+      }
+
+      // Create shapes
+      function createShape(type) {
+        const pos = new THREE.Vector3((Math.random() - 0.5) * 10, 10 + Math.random() * 10, (Math.random() - 0.5) * 10);
+        const quat = new THREE.Quaternion();
+        const mass = 1;
+        const color = colors[Math.floor(Math.random() * colors.length)];
+        let mesh, shape;
+
+        if (type === 'sphere') {
+          const r = 0.5 + Math.random() * 0.5;
+          mesh = new THREE.Mesh(
+            new THREE.SphereGeometry(r, performanceMode === 'rich' ? 32 : 16, performanceMode === 'rich' ? 16 : 8),
+            new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.2 })
+          );
+          shape = new Ammo.btSphereShape(r);
+        } else if (type === 'box') {
+          const s = 0.5 + Math.random() * 0.5;
+          mesh = new THREE.Mesh(
+            new THREE.BoxGeometry(s * 2, s * 2, s * 2),
+            new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.2 })
+          );
+          shape = new Ammo.btBoxShape(new Ammo.btVector3(s, s, s));
+        } else if (type === 'cylinder') {
+          const r = 0.5 + Math.random() * 0.3;
+          const h = 1 + Math.random() * 0.5;
+          mesh = new THREE.Mesh(
+            new THREE.CylinderGeometry(r, r, h, performanceMode === 'rich' ? 24 : 12),
+            new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.2 })
+          );
+          shape = new Ammo.btCylinderShape(new Ammo.btVector3(r, h / 2, r));
+        } else if (type === 'cone') {
+          const r = 0.5 + Math.random() * 0.3;
+          const h = 1 + Math.random() * 0.5;
+          mesh = new THREE.Mesh(
+            new THREE.ConeGeometry(r, h, performanceMode === 'rich' ? 24 : 12),
+            new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.2 })
+          );
+          shape = new Ammo.btConeShape(r, h);
+        } else if (type === 'torus') {
+          const g = new THREE.TorusGeometry(0.6, 0.25, performanceMode === 'rich' ? 16 : 8, performanceMode === 'rich' ? 28 : 14);
+          mesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.2 }));
+          const hull = new Ammo.btConvexHullShape();
+          const v = g.attributes.position.array;
+          for (let i = 0; i < v.length; i += 3) {
+            hull.addPoint(new Ammo.btVector3(v[i], v[i + 1], v[i + 2]), true);
+          }
+          shape = hull;
+        } else if (type === 'compound') {
+          const comp = new Ammo.btCompoundShape();
+          const group = new THREE.Group();
+          for (let i = 0; i < 3; i++) {
+            const t = new Ammo.btTransform();
+            t.setIdentity();
+            const ox = (Math.random() - 0.5) * 1;
+            const oy = (Math.random() - 0.5) * 1;
+            const oz = (Math.random() - 0.5) * 1;
+            t.setOrigin(new Ammo.btVector3(ox, oy, oz));
+            const sub = new Ammo.btSphereShape(0.3);
+            comp.addChildShape(t, sub);
+            const m = new THREE.Mesh(
+              new THREE.SphereGeometry(0.3, performanceMode === 'rich' ? 16 : 8, performanceMode === 'rich' ? 8 : 4),
+              new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.2 })
+            );
+            m.position.set(ox, oy, oz);
+            group.add(m);
+          }
+          mesh = group;
+          shape = comp;
+        } else return;
+
+        mesh.castShadow = performanceMode === 'rich';
+        mesh.receiveShadow = performanceMode === 'rich';
+        mesh.userData.color = color;
+        
+        const body = createRigidBody(mesh, shape, mass, pos, quat);
+        const lv = new Ammo.btVector3((Math.random() - 0.5) * 5, 0, (Math.random() - 0.5) * 5);
+        body.setLinearVelocity(lv);
+        const av = new Ammo.btVector3((Math.random() - 0.5) * 5, (Math.random() - 0.5) * 5, (Math.random() - 0.5) * 5);
+        body.setAngularVelocity(av);
+      }
+
+      // Export functions
+      function exportCanvas(canvas, filename) {
+        canvas.toBlob(blob => {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          a.click();
+          URL.revokeObjectURL(url);
+          
+          const notification = document.getElementById('exportNotification');
+          notification.style.display = 'block';
+          setTimeout(() => {
+            notification.style.display = 'none';
+          }, 2000);
+        });
+      }
+
+      function exportData() {
+        const data = {
+          timestamp: Date.now(),
+          paintResolution: PAINT_RES,
+          vectorGridSize: VECTOR_GRID,
+          groundSize: groundSize,
+          totalPaintPoints: totalPaintPoints,
+          activeVectorCells: activeVectorCells,
+          bodies: rigidBodies.length,
+          vectorField: Array.from(vectorField),
+          settings: {
+            paintMode: paintMode,
+            performanceMode: performanceMode,
+            slipThreshold: SLIP_THRESHOLD,
+            paintIntensity: PAINT_INTENSITY,
+            vectorStrength: VECTOR_STRENGTH,
+            contactReduction: CONTACT_REDUCTION
+          }
+        };
+        
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `paint_data_${Date.now()}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+
+      // UI Controls
+      document.getElementById('dropSphere').addEventListener('click', () => createShape('sphere'));
+      document.getElementById('dropBox').addEventListener('click', () => createShape('box'));
+      document.getElementById('dropCylinder').addEventListener('click', () => createShape('cylinder'));
+      document.getElementById('dropCone').addEventListener('click', () => createShape('cone'));
+      document.getElementById('dropTorus').addEventListener('click', () => createShape('torus'));
+      document.getElementById('dropCompound').addEventListener('click', () => createShape('compound'));
+
+      document.getElementById('togglePaint').addEventListener('click', (e) => {
+        paintEnabled = !paintEnabled;
+        e.target.classList.toggle('active', paintEnabled);
+        e.target.textContent = `Paint Mode: ${paintEnabled ? 'ON' : 'OFF'}`;
+      });
+
+      document.getElementById('toggleVector').addEventListener('click', (e) => {
+        vectorFieldEnabled = !vectorFieldEnabled;
+        e.target.classList.toggle('active', vectorFieldEnabled);
+        e.target.textContent = `Vector Field: ${vectorFieldEnabled ? 'ON' : 'OFF'}`;
+      });
+
+      document.getElementById('toggleHull').addEventListener('click', (e) => {
+        hullPatchEnabled = !hullPatchEnabled;
+        e.target.classList.toggle('active', hullPatchEnabled);
+        e.target.textContent = `Hull Patches: ${hullPatchEnabled ? 'ON' : 'OFF'}`;
+      });
+
+      document.getElementById('togglePerf').addEventListener('click', (e) => {
+        performanceMode = performanceMode === 'economy' ? 'rich' : 'economy';
+        e.target.classList.toggle('active', performanceMode === 'economy');
+        e.target.textContent = `Performance: ${performanceMode === 'economy' ? 'Economy' : 'Rich'}`;
+        // Note: Some settings require reload to take full effect
+      });
+
+      document.getElementById('paintMode').addEventListener('change', (e) => {
+        paintMode = e.target.value;
+      });
+
+      // Physics sliders
+      const restitutionSlider = document.getElementById('restitutionSlider');
+      const frictionSlider = document.getElementById('frictionSlider');
+      const gravitySlider = document.getElementById('gravitySlider');
+      
+      restitutionSlider.addEventListener('input', () => {
+        physicsParams.restitution = (+restitutionSlider.value) / 100;
+        document.getElementById('restitutionValue').textContent = physicsParams.restitution.toFixed(2);
+        for (const m of rigidBodies) {
+          m.userData.physicsBody.setRestitution(physicsParams.restitution);
+        }
+        groundBody.setRestitution(physicsParams.restitution);
+      });
+
+      frictionSlider.addEventListener('input', () => {
+        physicsParams.friction = (+frictionSlider.value) / 100;
+        document.getElementById('frictionValue').textContent = physicsParams.friction.toFixed(2);
+        for (const m of rigidBodies) {
+          m.userData.physicsBody.setFriction(physicsParams.friction);
+        }
+        groundBody.setFriction(physicsParams.friction);
+      });
+
+      gravitySlider.addEventListener('input', () => {
+        const g = (+gravitySlider.value) / 10;
+        document.getElementById('gravityValue').textContent = g.toFixed(1);
+        physicsWorld.setGravity(new Ammo.btVector3(0, -g, 0));
+      });
+
+      // Paint settings sliders
+      document.getElementById('slipThreshold').addEventListener('input', (e) => {
+        SLIP_THRESHOLD = (+e.target.value) / 100;
+        document.getElementById('slipThresholdValue').textContent = SLIP_THRESHOLD.toFixed(2);
+      });
+
+      document.getElementById('paintIntensity').addEventListener('input', (e) => {
+        PAINT_INTENSITY = (+e.target.value) / 100;
+        document.getElementById('paintIntensityValue').textContent = PAINT_INTENSITY.toFixed(1);
+      });
+
+      document.getElementById('vectorStrength').addEventListener('input', (e) => {
+        VECTOR_STRENGTH = (+e.target.value) / 100;
+        document.getElementById('vectorStrengthValue').textContent = VECTOR_STRENGTH.toFixed(1);
+      });
+
+      document.getElementById('contactReduction').addEventListener('input', (e) => {
+        CONTACT_REDUCTION = +e.target.value;
+        document.getElementById('contactReductionValue').textContent = CONTACT_REDUCTION;
+      });
+
+      // Export buttons
+      document.getElementById('exportPaint').addEventListener('click', () => {
+        exportCanvas(paintCanvas, `paint_${Date.now()}.png`);
+      });
+
+      document.getElementById('exportVector').addEventListener('click', () => {
+        renderVectorField();
+        exportCanvas(vectorCanvas, `vector_field_${Date.now()}.png`);
+      });
+
+      document.getElementById('exportData').addEventListener('click', exportData);
+
+      document.getElementById('clearPaint').addEventListener('click', () => {
+        paintCtx.clearRect(0, 0, PAINT_RES, PAINT_RES);
+        paintTex.needsUpdate = true;
+        vectorField.fill(0);
+        totalPaintPoints = 0;
+        activeVectorCells = 0;
+        contactHistory.clear();
+        manifoldBuckets.clear();
+      });
+
+      document.getElementById('reset').addEventListener('click', () => {
+        for (let i = rigidBodies.length - 1; i >= 0; i--) {
+          const m = rigidBodies[i];
+          physicsWorld.removeRigidBody(m.userData.physicsBody);
+          scene.remove(m);
+          rigidBodies.pop();
+        }
+        paintCtx.clearRect(0, 0, PAINT_RES, PAINT_RES);
+        paintTex.needsUpdate = true;
+        vectorField.fill(0);
+        totalPaintPoints = 0;
+        activeVectorCells = 0;
+        contactHistory.clear();
+        manifoldBuckets.clear();
+      });
+
+      // Mouse controls for object dragging
+      const raycaster = new THREE.Raycaster();
+      const mouse = new THREE.Vector2();
+      let draggedBody = null;
+      let ctrlDown = false;
+
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Control') {
+          ctrlDown = true;
+          controls.enabled = false;
+        }
+      });
+
+      window.addEventListener('keyup', (e) => {
+        if (e.key === 'Control') {
+          ctrlDown = false;
+          controls.enabled = true;
+        }
+      });
+
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      // Animation loop
+      const clock = new THREE.Clock();
+      let frameCount = 0;
+      let lastFps = 0;
+
+      function updatePhysics(dt) {
+        const substeps = performanceMode === 'rich' ? 2 : 1;
+        const subdt = dt / substeps;
+        
+        for (let step = 0; step < substeps; step++) {
+          physicsWorld.stepSimulation(subdt, 1, 1 / 240);
+          physicsSteps++;
+        }
+        
+        const activeContacts = processContacts();
+        
+        // Update bodies
+        for (let i = 0; i < rigidBodies.length; i++) {
+          const mesh = rigidBodies[i];
+          const body = mesh.userData.physicsBody;
+          if (body && body.getMotionState) {
+            body.getMotionState().getWorldTransform(tmpTrans);
+            const pos = tmpTrans.getOrigin();
+            const quat = tmpTrans.getRotation();
+            mesh.position.set(pos.x(), pos.y(), pos.z());
+            mesh.quaternion.set(quat.x(), quat.y(), quat.z(), quat.w());
+            
+            if (pos.y() < -20) {
+              physicsWorld.removeRigidBody(body);
+              scene.remove(mesh);
+              rigidBodies.splice(i, 1);
+              i--;
+            }
+          }
+        }
+        
+        return activeContacts;
+      }
+
+      function animate() {
+        requestAnimationFrame(animate);
+        const dt = Math.min(clock.getDelta(), 0.1);
+        
+        const activeContacts = updatePhysics(dt);
+        
+        // Update vector field visualization periodically
+        if (vectorFieldEnabled && frameCount % 10 === 0) {
+          renderVectorField();
+        }
+        
+        frameCount++;
+        const now = Date.now();
+        if (now - lastFps > 1000) {
+          document.getElementById('fps').textContent = frameCount;
+          document.getElementById('physicsHz').textContent = Math.round(physicsSteps);
+          frameCount = 0;
+          physicsSteps = 0;
+          lastFps = now;
+        }
+        
+        document.getElementById('bodyCount').textContent = rigidBodies.length;
+        document.getElementById('paintCount').textContent = totalPaintPoints;
+        document.getElementById('contactCount').textContent = activeContacts;
+        document.getElementById('vectorCount').textContent = activeVectorCells;
+        
+        activeVectorCells = 0; // Reset for next frame
+        
+        controls.update();
+        renderer.render(scene, camera);
+      }
+
+      // Initial spawn
+      function initSpawn() {
+        for (let i = 0; i < 3; i++) createShape('box');
+        for (let i = 0; i < 2; i++) createShape('sphere');
+      }
+      
+      initSpawn();
+      animate();
+    });
+  </script>
+</body>
+</html>
