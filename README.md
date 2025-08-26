@@ -10,22 +10,6 @@ This folder contains the experiments renamed based on each file’s actual conte
 
 ## Experiments
 
-### paint_contact_full_collision_directional.html
-_from `contact-paint-physics.html` — title detected:_ **Contact Paint Physics - Full Collision System**
-- **Features:** `full_collision` `contact` `impact` `directional`
-- **Libs:** three.js, stats.js
-- **Summary:** Dynamic paint marks from motion/contacts; supports trails, impacts, and layering.
-- **Pros:**
-  - Accurate contact areas and penetration handling.
-  - Consistent contact-driven triggering; intuitive for surface interactions.
-  - Crisp hit marks; good for collisions and discrete events.
-  - Anisotropic effects (with/against grain) for richer visuals.
-- **Cons:**
-  - More compute; tuning penetration resolution can be tricky.
-  - Noisy contact signals may need filtering/debouncing.
-  - Discrete splats lack continuity; can look staccato under high frequency.
-  - More parameters to tune; risk of unnatural bias if mis-set.
-
 ### dynamic_paint_contact_slip_uv_trails_obb.html
 _from `dynamic_paint_fast_obb.html` — title detected:_ **Ammo.js Physics - Dynamic Paint (UV Trails + OBB Hull + Deferred Decals)**
 - **Features:** `contact` `dynamic_paint` `slip` `obb` `hull_patches` `uv_trails` `deferred_decals` `directional`
