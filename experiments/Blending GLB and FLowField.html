@@ -1,0 +1,1077 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Contacts + Field/Flow Layers + N-Variant Smooth Blend (v31)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  body { background: #0b0b0b; color: #e5e7eb; }
+  #loadingScreen { position: fixed; inset: 0; display: grid; place-items: center; gap: 10px; background:#0b0b0b; z-index: 9; }
+  .spinner { width: 44px; height: 44px; border: 3px solid rgba(168,85,247,.35); border-top-color:#a855f7; border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #hud { position: fixed; left: 10px; top: 10px; display: flex; gap: 10px; flex-wrap: wrap; z-index: 5; }
+  .panel { background: rgba(18,18,18,.92); border: 1px solid rgba(255,255,255,.08); border-radius: 10px; padding: 10px 12px; }
+  #controls button, #controls select, #controls input[type="range"], #controls input[type="checkbox"], #controls input[type="file"] { background:#111827; border:1px solid #374151; color:#e5e7eb; padding:6px 10px; border-radius:8px; cursor:pointer; font-size:12px; }
+  #controls button:hover { background:#1f2937; transform: translateY(-1px); }
+  #controls .row { display:flex; align-items:center; gap:8px; margin-top:6px; flex-wrap: wrap; }
+  #stats { font-size:12px; color:#9ca3af; }
+  .label { min-width: 130px; color:#cbd5e1; }
+  .pill { padding:2px 6px; border-radius:6px; background:#0f172a; border:1px solid #1f2937; font-size:11px; }
+  #pipBox { position: fixed; right: 10px; top: 10px; width: 260px; height: 260px; border: 2px solid #22c55e; border-radius: 8px; pointer-events: none; z-index: 4; }
+  #pipBox.hidden { display: none; }
+  .save-btn { background: #059669 !important; border-color: #047857 !important; }
+  .save-btn:hover { background: #047857 !important; }
+</style>
+</head>
+<body>
+  <div id="loadingScreen">
+    <div class="spinner"></div>
+    <div>Loading …</div>
+  </div>
+
+  <div id="hud" style="display:none;">
+    <div class="panel" id="controls">
+      <div style="margin-bottom:6px; font-weight:600; color:#a855f7;">Controls</div>
+      <div class="row">
+        <span class="label">Body</span>
+        <select id="shape">
+          <option value="cube" selected>Cube (subdiv 10)</option>
+          <option value="puck">Puck (torus)</option>
+        </select>
+        <button id="start">Start</button>
+        <button id="reset">Reset</button>
+        <button id="clearPaint">Clear Paint</button>
+      </div>
+
+      <div class="row">
+        <span class="label">Speed X</span>
+        <input id="speedX" type="range" min="-60" max="60" value="15" step="1" />
+        <span id="speedXVal" class="pill">15</span>
+      </div>
+      <div class="row">
+        <span class="label">Speed Y (plane Z)</span>
+        <input id="speedZ" type="range" min="-60" max="60" value="0" step="1" />
+        <span id="speedZVal" class="pill">0</span>
+      </div>
+      <div class="row">
+        <span class="label">Gravity</span>
+        <input id="gravity" type="range" min="981" max="20000" value="981" step="1" />
+        <span id="gravityVal" class="pill">9.81</span>
+      </div>
+      <div class="row">
+        <span class="label">Friction</span>
+        <input id="friction" type="range" min="0" max="100" value="80" step="1" />
+        <span id="frictionVal" class="pill">0.80</span>
+      </div>
+      <div class="row">
+        <span class="label">Restitution</span>
+        <input id="restitution" type="range" min="0" max="100" value="10" step="1" />
+        <span id="restitutionVal" class="pill">0.10</span>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="ccd" checked /> CCD</label>
+        <label style="margin-left:12px;"><input type="checkbox" id="pip" checked /> PiP OMBB Zoom</label>
+      </div>
+
+      <div style="margin-top:8px; font-weight:600; color:#a855f7;">Layers</div>
+      <div class="row"><label><input type="checkbox" id="layerContacts" checked /> Contact Points</label></div>
+      <div class="row"><label><input type="checkbox" id="layerPaintHull" checked /> Paint Hull Fill (green)</label></div>
+      <div class="row"><label><input type="checkbox" id="layerGeomMean" checked /> Paint Geometric Mean (purple)</label></div>
+      <div class="row">
+        <label><input type="checkbox" id="layerField" checked /> Field (intensity)</label>
+        <button id="saveField" class="save-btn">Save Field</button>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="layerFlow" checked /> Flow (directional)</label>
+        <button id="saveFlow" class="save-btn">Save Flow</button>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="layerCombined" checked /> Combined (field+flow)</label>
+        <button id="saveCombined" class="save-btn">Save Combined</button>
+      </div>
+      <div class="row"><label><input type="checkbox" id="layerHull" checked /> Hull + OMBB + Centroid (frame)</label></div>
+
+      <div style="margin-top:8px; font-weight:600; color:#22c55e;">Plane GLB + Variants</div>
+      <div class="row">
+        <input id="planeFile" type="file" accept=".glb,.gltf,model/gltf-binary" />
+        <button id="loadPlane">Load plane.glb</button>
+        <span id="variantInfo" class="pill">No variants</span>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="blendDrive" /> Drive N-variant blend locally by Field</label>
+      </div>
+    </div>
+
+    <div class="panel" id="stats">
+      <div><span class="pill">Frames</span> <span id="frame">0</span></div>
+      <div><span class="pill">Contacts</span> <span id="contacts">0</span></div>
+      <div><span class="pill">OMBB Angle</span> <span id="obbAng">—</span></div>
+      <div><span class="pill">Centroid</span> <span id="centroid">—</span></div>
+      <div><span class="pill">Geom Mean</span> <span id="gmean">—</span></div>
+      <div><span class="pill">FPS</span> <span id="fps">0</span></div>
+    </div>
+  </div>
+
+  <div id="pipBox"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/ammojs3@0.0.11/dist/ammo.wasm.js"></script>
+  <script type="importmap">
+  {"imports":{
+    "three":"https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
+    "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"
+  }}
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const A = await Ammo();
+
+    // --- Config ---
+    const CFG = {
+      FIELD_WHITE_AT: 2000,    // slow whitening
+      FIELD_GAMMA: 3.5,
+      PIP_W: 260,
+      PIP_H: 260,
+      PIP_MARGIN: 1.25,
+      PLANE_SIZE: 20,
+      MIN_BOX_MARGIN: 0.12,
+      DEDUPE_CELL: 0.01,
+      MAD_K: 3.0
+    };
+
+    // --- Cameras ---
+    const aspect = innerWidth/innerHeight;
+    const orthoHalf = CFG.PLANE_SIZE*0.55;
+    const camera = new THREE.OrthographicCamera(-orthoHalf*aspect, orthoHalf*aspect, orthoHalf, -orthoHalf, 0.01, 100);
+    camera.position.set(0, 20, 0); camera.up.set(0,0,-1); camera.lookAt(0,0,0);
+    const pipCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 100);
+    pipCam.position.set(0, 20, 0); pipCam.up.set(0,0,-1); pipCam.lookAt(0,0,0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0b0b);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableRotate = false; controls.enablePan = true; controls.enableZoom = true;
+    controls.target.set(0,0,0); controls.update();
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+    const d = new THREE.DirectionalLight(0xffffff, 0.65); d.position.set(10,15,5); scene.add(d);
+
+    // ====== LAYER CANVASES ======
+    const LRES = 1024;
+    const paintHullCanvas = document.createElement('canvas'); paintHullCanvas.width=LRES; paintHullCanvas.height=LRES;
+    const paintHullCtx = paintHullCanvas.getContext('2d'); paintHullCtx.fillStyle='#0e1a15'; paintHullCtx.fillRect(0,0,LRES,LRES);
+    const paintGeomCanvas = document.createElement('canvas'); paintGeomCanvas.width=LRES; paintGeomCanvas.height=LRES;
+    const paintGeomCtx = paintGeomCanvas.getContext('2d');
+    
+    // Separate canvases for field, flow, and combined
+    const fieldCanvas = document.createElement('canvas'); fieldCanvas.width=LRES; fieldCanvas.height=LRES;
+    const fieldCtx = fieldCanvas.getContext('2d');
+    const flowCanvas = document.createElement('canvas'); flowCanvas.width=LRES; flowCanvas.height=LRES;
+    const flowCtx = flowCanvas.getContext('2d');
+    const combinedCanvas = document.createElement('canvas'); combinedCanvas.width=LRES; combinedCanvas.height=LRES;
+    const combinedCtx = combinedCanvas.getContext('2d');
+    
+    const frameCanvas = document.createElement('canvas'); frameCanvas.width=LRES; frameCanvas.height=LRES;
+    const frameCtx = frameCanvas.getContext('2d');
+    const ACC_W=256, ACC_H=256;
+    const accMaskCanvas = document.createElement('canvas'); accMaskCanvas.width=ACC_W; accMaskCanvas.height=ACC_H;
+    const accMaskCtx = accMaskCanvas.getContext('2d', { willReadFrequently: true });
+
+    function layerPlane(canvas, y, transparent=true) {
+      const tex = new THREE.CanvasTexture(canvas); tex.flipY = true;
+      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent, opacity: 1, depthWrite: false });
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(CFG.PLANE_SIZE, CFG.PLANE_SIZE, 200, 200), mat);
+      mesh.rotation.x = -Math.PI/2; mesh.position.y = y; mesh.renderOrder = Math.round(y*1000);
+      scene.add(mesh);
+      return { tex, mesh };
+    }
+    const layers = {
+      field: layerPlane(fieldCanvas, 0.001),
+      flow: layerPlane(flowCanvas, 0.002),
+      combined: layerPlane(combinedCanvas, 0.0025),
+      paintHull: layerPlane(paintHullCanvas, 0.003),
+      paintGeom: layerPlane(paintGeomCanvas, 0.004),
+      frame: layerPlane(frameCanvas, 0.006),
+    };
+
+    // ====== Save functions ======
+    function saveCanvasAsPNG(canvas, filename) {
+      canvas.toBlob(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+    }
+
+    // ====== GLB plane with shader-based N-variant blending ======
+    const loader = new GLTFLoader();
+    let planeRoot = null;
+    let variantNames = [];
+    let gltfParser = null;
+    let variantTextures = []; // array of textures for each variant
+    let variantShaderMesh = null; // single mesh with custom shader
+    let driveBlend = false;
+    
+    // Custom shader for field-based variant blending
+    const variantVertexShader = `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `;
+    
+    const variantFragmentShader = `
+      uniform sampler2D fieldTexture;
+      uniform sampler2D variant0;
+      uniform sampler2D variant1;
+      uniform sampler2D variant2;
+      uniform sampler2D variant3;
+      uniform int variantCount;
+      uniform float threshold;
+      uniform bool enableBlending;
+      
+      varying vec2 vUv;
+      
+      void main() {
+        vec4 fieldColor = texture2D(fieldTexture, vUv);
+        float fieldIntensity = fieldColor.r; // Use red channel as intensity
+        
+        vec4 color = texture2D(variant0, vUv);
+        
+        if (enableBlending && variantCount > 1) {
+          // Apply threshold
+          float blend = 0.0;
+          if (fieldIntensity > threshold) {
+            // Remap and apply smoothstep
+            float remapped = (fieldIntensity - threshold) / (1.0 - threshold);
+            blend = remapped * remapped * (3.0 - 2.0 * remapped);
+          }
+          
+          // Blend based on variant count
+          if (variantCount == 2) {
+            vec4 v1 = texture2D(variant1, vUv);
+            color = mix(color, v1, blend);
+          } else if (variantCount == 3) {
+            float x = blend * 2.0;
+            if (x <= 1.0) {
+              vec4 v1 = texture2D(variant1, vUv);
+              color = mix(color, v1, x);
+            } else {
+              vec4 v1 = texture2D(variant1, vUv);
+              vec4 v2 = texture2D(variant2, vUv);
+              color = mix(v1, v2, x - 1.0);
+            }
+          } else if (variantCount == 4) {
+            float x = blend * 3.0;
+            if (x <= 1.0) {
+              vec4 v1 = texture2D(variant1, vUv);
+              color = mix(color, v1, x);
+            } else if (x <= 2.0) {
+              vec4 v1 = texture2D(variant1, vUv);
+              vec4 v2 = texture2D(variant2, vUv);
+              color = mix(v1, v2, x - 1.0);
+            } else {
+              vec4 v2 = texture2D(variant2, vUv);
+              vec4 v3 = texture2D(variant3, vUv);
+              color = mix(v2, v3, x - 2.0);
+            }
+          }
+        }
+        
+        gl_FragColor = color;
+      }
+    `;
+    
+    // Create field blend texture for shader
+    const fieldBlendTexture = new THREE.CanvasTexture(fieldCanvas);
+    fieldBlendTexture.flipY = true;
+    
+    function setVariantOnMesh(mesh, vidx) {
+      const ext = mesh.userData.gltfExtensions && mesh.userData.gltfExtensions['KHR_materials_variants'];
+      if (!ext) return null;
+      const maps = ext.mappings || [];
+      let mIndex = null;
+      for (const m of maps) { if (m.variants && m.variants.includes(vidx)) { mIndex = m.material; break; } }
+      if (mIndex === null || !gltfParser) return null;
+      return gltfParser.getDependency('material', mIndex);
+    }
+    function collectVariantsFromGLTF(gltf) {
+      const json = gltf.parser.json;
+      const vext = json.extensions && json.extensions.KHR_materials_variants;
+      variantNames = vext ? vext.variants.map(v=>v.name || '') : [];
+      document.getElementById('variantInfo').textContent = variantNames.length ? `${variantNames.length} variants` : 'No variants';
+    }
+    
+    async function loadPlaneGLBFrom(urlOrFile) {
+      if (planeRoot) { 
+        scene.remove(planeRoot); 
+        planeRoot.traverse(o=>{ 
+          if (o.isMesh && o.geometry) o.geometry.dispose(); 
+          if (o.isMesh && o.material) {
+            if (o.material.map) o.material.map.dispose();
+            o.material.dispose();
+          }
+        }); 
+        planeRoot=null; 
+      }
+      variantTextures = [];
+      variantShaderMesh = null;
+      
+      const gltf = await new Promise((res,rej)=> loader.load(urlOrFile, res, undefined, rej));
+      gltfParser = gltf.parser; 
+      collectVariantsFromGLTF(gltf);
+      
+      let srcMesh = null; 
+      gltf.scene.traverse(o=>{ if (o.isMesh && !srcMesh) srcMesh=o; });
+      if (!srcMesh) { console.warn('No mesh in plane.glb'); return; }
+      
+      planeRoot = new THREE.Group(); 
+      scene.add(planeRoot);
+
+      // Scale/position root using original mesh bbox
+      const bbox = new THREE.Box3().setFromObject(srcMesh);
+      const sx = bbox.getSize(new THREE.Vector3());
+      const s = CFG.PLANE_SIZE / Math.max(1e-3, Math.max(sx.x, sx.z));
+      planeRoot.scale.setScalar(s); 
+      planeRoot.position.set(0,0,0);
+
+      if (variantNames.length >= 2) {
+        // Collect textures from all variants
+        const tempTextures = [];
+        for (let i = 0; i < Math.min(4, variantNames.length); i++) {
+          const mat = await setVariantOnMesh(srcMesh, i);
+          if (mat && mat.map) {
+            tempTextures.push(mat.map);
+          } else {
+            // Create default texture if no map
+            const canvas = document.createElement('canvas');
+            canvas.width = 256; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = i === 0 ? '#666666' : '#888888';
+            ctx.fillRect(0, 0, 256, 256);
+            tempTextures.push(new THREE.CanvasTexture(canvas));
+          }
+        }
+        variantTextures = tempTextures;
+        
+        // Create shader material with variant textures
+        const shaderMaterial = new THREE.ShaderMaterial({
+          vertexShader: variantVertexShader,
+          fragmentShader: variantFragmentShader,
+          uniforms: {
+            fieldTexture: { value: fieldBlendTexture },
+            variant0: { value: variantTextures[0] || null },
+            variant1: { value: variantTextures[1] || null },
+            variant2: { value: variantTextures[2] || null },
+            variant3: { value: variantTextures[3] || null },
+            variantCount: { value: variantTextures.length },
+            threshold: { value: 0.2 },
+            enableBlending: { value: false }
+          },
+          side: THREE.DoubleSide
+        });
+        
+        // Create mesh with shader
+        variantShaderMesh = srcMesh.clone();
+        variantShaderMesh.material = shaderMaterial;
+        variantShaderMesh.position.y = 0.0001;
+        planeRoot.add(variantShaderMesh);
+      } else {
+        // No variants - use original material
+        const m = srcMesh.clone();
+        m.position.y = 0; 
+        planeRoot.add(m);
+      }
+    }
+    
+    loadPlaneGLBFrom('plane.glb').catch(()=>{ 
+      document.getElementById('variantInfo').textContent='No plane.glb found'; 
+    });
+    
+    function updateShaderBlending() {
+      if (variantShaderMesh && variantShaderMesh.material.uniforms) {
+        variantShaderMesh.material.uniforms.fieldTexture.value = fieldBlendTexture;
+        variantShaderMesh.material.uniforms.enableBlending.value = driveBlend;
+        fieldBlendTexture.needsUpdate = true;
+      }
+    }
+
+    // Blend map for spatially-varying variant blending
+    const blendMapCanvas = document.createElement('canvas'); 
+    blendMapCanvas.width = LRES; 
+    blendMapCanvas.height = LRES;
+    const blendMapCtx = blendMapCanvas.getContext('2d');
+    const blendMapTexture = new THREE.CanvasTexture(blendMapCanvas);
+    blendMapTexture.flipY = true;
+    
+    function setVariantBlendByT(t){
+      if (planeLayers.length === 0) return;
+      t = Math.max(0, Math.min(1, t));
+      const N = planeLayers.length;
+      if (N === 1) { planeLayers[0].material.opacity = 1.0; return; }
+      const x = t*(N-1);
+      let i = Math.floor(x);
+      if (i >= N-1) i = N-2;
+      const u = x - i;
+      const uSmooth = u*u*(3-2*u); // smoothstep
+      for (let k=0;k<N;k++){ planeLayers[k].material.opacity = 0.0; }
+      planeLayers[i].material.opacity = 1.0 - uSmooth;
+      planeLayers[i+1].material.opacity = uSmooth;
+      document.getElementById('tVal').textContent = `t=${t.toFixed(2)} (seg ${i}→${i+1}, u=${uSmooth.toFixed(2)})`;
+    }
+    
+    function setVariantBlendByFieldMap(){
+      if (planeLayers.length <= 1) return;
+      
+      // Create blend map from field intensity
+      blendMapCtx.clearRect(0, 0, LRES, LRES);
+      
+      // Draw the field data to blend map at full resolution
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = ACC_W;
+      tempCanvas.height = ACC_H;
+      const tempCtx = tempCanvas.getContext('2d');
+      const blendData = tempCtx.createImageData(ACC_W, ACC_H);
+      
+      let maxBlend = 0;
+      let sumBlend = 0;
+      let countBlend = 0;
+      
+      // Process each pixel of the field
+      for (let idx = 0; idx < acc.length; idx++) {
+        // Calculate field intensity at this pixel
+        let fieldIntensity = acc[idx] >= CFG.FIELD_WHITE_AT ? 1.0 : (acc[idx] / CFG.FIELD_WHITE_AT);
+        fieldIntensity = Math.max(0, Math.min(1, Math.pow(fieldIntensity, CFG.FIELD_GAMMA)));
+        
+        // Apply threshold and smoothstep for blend value
+        const threshold = 0.2; // Start blending at 20% field intensity
+        let pixelBlend = 0;
+        
+        if (fieldIntensity > threshold) {
+          // Remap and apply smoothstep
+          const remapped = (fieldIntensity - threshold) / (1 - threshold);
+          pixelBlend = remapped * remapped * (3 - 2 * remapped);
+        }
+        
+        // Store in blend data (grayscale = blend amount)
+        const val = Math.round(pixelBlend * 255);
+        blendData.data[4 * idx] = val;
+        blendData.data[4 * idx + 1] = val;
+        blendData.data[4 * idx + 2] = val;
+        blendData.data[4 * idx + 3] = 255;
+        
+        if (pixelBlend > 0) {
+          sumBlend += pixelBlend;
+          countBlend++;
+          if (pixelBlend > maxBlend) maxBlend = pixelBlend;
+        }
+      }
+      
+      // Draw to temp canvas and scale up to full resolution
+      tempCtx.putImageData(blendData, 0, 0);
+      blendMapCtx.imageSmoothingEnabled = true; // Enable smoothing for upscaling
+      blendMapCtx.drawImage(tempCanvas, 0, 0, LRES, LRES);
+      blendMapTexture.needsUpdate = true;
+      
+      // Calculate average blend for UI display
+      const avgBlend = countBlend > 0 ? sumBlend / countBlend : 0;
+      
+      // Apply field-based blending using custom alpha maps
+      const N = planeLayers.length;
+      if (N >= 2) {
+        // For simplicity, blend between first two variants based on field map
+        // Reset all layers
+        for (let k = 0; k < N; k++) {
+          planeLayers[k].material.opacity = 0;
+          planeLayers[k].material.transparent = true;
+        }
+        
+        // Base layer always visible
+        planeLayers[0].material.opacity = 1.0;
+        
+        // Second layer uses field as alpha map for localized blending
+        if (planeLayers[1] && planeLayers[1].material) {
+          planeLayers[1].material.opacity = maxBlend; // Use max blend for visibility
+          planeLayers[1].material.alphaMap = blendMapTexture;
+          planeLayers[1].material.transparent = true;
+          planeLayers[1].material.needsUpdate = true;
+        }
+        
+        // Update UI with average blend info
+        document.getElementById('blendT').value = String(Math.round(avgBlend * 1000));
+        document.getElementById('blendTVal').textContent = avgBlend.toFixed(2);
+        document.getElementById('tVal').textContent = `Field-based (avg=${avgBlend.toFixed(2)}, max=${maxBlend.toFixed(2)})`;
+      }
+    }
+
+    // ====== ACCUMULATORS ======
+    const acc = new Uint32Array(ACC_W*ACC_H); // hull-pass counts
+    const flowX = new Float32Array(ACC_W*ACC_H);
+    const flowZ = new Float32Array(ACC_W*ACC_H);
+    const flowC = new Uint32Array(ACC_W*ACC_H);
+    let objVel = { x:0, z:0 };
+
+    // ====== VISIBILITY ======
+    let layerContacts=true, layerPaintHull=true, layerGeomMean=true, layerField=true, layerFlow=true, layerCombined=true, layerHull=true, pipEnabled=true;
+    function setVisibility(){
+      layers.field.mesh.visible = layerField;
+      layers.flow.mesh.visible = layerFlow;
+      layers.combined.mesh.visible = layerCombined;
+      layers.paintHull.mesh.visible = layerPaintHull;
+      layers.paintGeom.mesh.visible = layerGeomMean;
+      layers.frame.mesh.visible = layerHull;
+      document.getElementById('pipBox').classList.toggle('hidden', !pipEnabled);
+    }
+
+    // ====== GEOM UTILS ======
+    function worldToUV(x, z){
+      const u = (x + CFG.PLANE_SIZE/2) / CFG.PLANE_SIZE;
+      const v = (z + CFG.PLANE_SIZE/2) / CFG.PLANE_SIZE;
+      return { u: Math.min(1, Math.max(0, u)), v: Math.min(1, Math.max(0, v)) };
+    }
+    function cross(o,a,b){ return (a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x); }
+    function hullMonotoneChain(pts) {
+      if (pts.length <= 1) return pts.slice();
+      const p = pts.slice().sort((a,b)=>a.x===b.x? a.y-b.y : a.x-b.x);
+      const lower = [];
+      for (const pt of p) { while (lower.length>=2 && cross(lower[lower.length-2], lower[lower.length-1], pt) <= 0) lower.pop(); lower.push(pt); }
+      const upper = [];
+      for (let i=p.length-1; i>=0; i--) { const pt=p[i]; while (upper.length>=2 && cross(upper[upper.length-2], upper[upper.length-1], pt) <= 0) upper.pop(); upper.push(pt); }
+      upper.pop(); lower.pop(); return lower.concat(upper);
+    }
+    function ombbCalipers(hull){
+      const n = hull.length; if (n < 2) return null;
+      const ux = new Array(n), uy = new Array(n);
+      for (let i=0;i<n;i++){
+        const a=hull[i], b=hull[(i+1)%n];
+        let dx=b.x-a.x, dy=b.y-a.y; const L=Math.hypot(dx,dy)||1;
+        ux[i]=dx/L; uy[i]=dy/L;
+      }
+      function dotU(p,i){ return p.x*ux[i] + p.y*uy[i]; }
+      function dotV(p,i){ const vx=-uy[i], vy=ux[i]; return p.x*vx + p.y*vy; }
+      // initial extreme indices for i=0
+      let j=0,k=0,m=0,l=0;
+      for (let t=0;t<n;t++){ const u=dotU(hull[t],0), v=dotV(hull[t],0);
+        if (u<dotU(hull[j],0)) j=t; if (u>dotU(hull[k],0)) k=t;
+        if (v<dotV(hull[m],0)) m=t; if (v>dotV(hull[l],0)) l=t;
+      }
+      let best=null;
+      for (let i=0;i<n;i++){
+        const umin=dotU(hull[j],i), umax=dotU(hull[k],i);
+        const vmin=dotV(hull[m],i), vmax=dotV(hull[l],i);
+        const width=umax-umin, height=vmax-vmin, area=width*height;
+        if (!best || area<best.area){
+          const u0=(umin+umax)/2, v0=(vmin+vmax)/2;
+          const ux_i=ux[i], uy_i=uy[i], vx_i=-uy_i, vy_i=ux_i;
+          const cx=u0*ux_i + v0*vx_i;
+          const cz=u0*uy_i + v0*vy_i;
+          let ang=Math.atan2(uy_i,ux_i);
+          if (ang<=-Math.PI/2) ang+=Math.PI; else if (ang>Math.PI/2) ang-=Math.PI;
+          best={center:{x:cx,z:cz}, width,height,area,ang};
+        }
+      }
+      return best;
+    }
+    function buildRect(cx,cz,ang,w,h){
+      const ux=Math.cos(ang), uy=Math.sin(ang);
+      const vx=-uy, vy=ux;
+      const hw=w/2, hh=h/2;
+      return [
+        { x: cx - hw*ux - hh*vx, z: cz - hw*uy - hh*vy },
+        { x: cx + hw*ux - hh*vx, z: cz + hw*uy - hh*vy },
+        { x: cx + hw*ux + hh*vx, z: cz + hw*uy + hh*vy },
+        { x: cx - hw*ux + hh*vx, z: cz - hw*uy + hh*vy },
+      ];
+    }
+    function aabbOfPoints(pts){
+      let minX=Infinity,maxX=-Infinity,minZ=Infinity,maxZ=-Infinity;
+      for (const p of pts){ if(p.x<minX)minX=p.x; if(p.x>maxX)maxX=p.x; if(p.z<minZ)minZ=p.z; if(p.z>maxZ)maxZ=p.z; }
+      return {minX,maxX,minZ,maxZ};
+    }
+
+    // ====== DENOISE ======
+    function median(arr){ const a=arr.slice().sort((x,y)=>x-y); const n=a.length; return n? (n%2? a[(n-1)/2] : 0.5*(a[n/2-1]+a[n/2])) : 0; }
+    function denoisePoints(points){
+      if (points.length <= 4) return points.slice();
+      const xs = points.map(p=>p.x); const zs = points.map(p=>p.z);
+      const cmx = median(xs), cmz = median(zs);
+      const dists = points.map(p=>Math.hypot(p.x - cmx, p.z - cmz));
+      const med = median(dists);
+      const mad = median(dists.map(d=>Math.abs(d - med))) || 0;
+      const sigma = 1.4826 * mad;
+      const thr = med + CFG.MAD_K * sigma + 1e-6;
+      let filtered = points.filter((p,i)=> dists[i] <= thr );
+      if (filtered.length < 4) filtered = points.slice();
+      const seen = new Set(); const unique = [];
+      for (const p of filtered){
+        const k = Math.round(p.x/CFG.DEDUPE_CELL)+','+Math.round(p.z/CFG.DEDUPE_CELL);
+        if (!seen.has(k)){ seen.add(k); unique.push(p); }
+      }
+      return unique;
+    }
+
+    // ====== DRAW PER FRAME ======
+    let lastRect = null;
+    const fieldImg = fieldCtx.createImageData(ACC_W, ACC_H);
+    const flowImg = flowCtx.createImageData(ACC_W, ACC_H);
+    const combinedImg = combinedCtx.createImageData(ACC_W, ACC_H);
+
+    function hsvToRgb(h,s,v){
+      const i = Math.floor(h*6);
+      const f = h*6 - i;
+      const p = v*(1-s);
+      const q = v*(1-f*s);
+      const t = v*(1-(1-f)*s);
+      let r,g,b;
+      switch (i % 6) {
+        case 0: r=v; g=t; b=p; break;
+        case 1: r=q; g=v; b=p; break;
+        case 2: r=p; g=v; b=t; break;
+        case 3: r=p; g=q; b=v; break;
+        case 4: r=t; g=p; b=v; break;
+        case 5: r=v; g=p; b=q; break;
+      }
+      return [Math.round(r*255), Math.round(g*255), Math.round(b*255)];
+    }
+
+    function paintContactDot(x, z) {
+      if (!layerContacts) return;
+      const {u, v} = worldToUV(x, z);
+      const px = Math.floor(u * LRES);
+      const py = Math.floor(v * LRES);
+      const r = 3;
+      paintHullCtx.fillStyle = '#ff4d4d';
+      paintHullCtx.beginPath();
+      paintHullCtx.arc(px, py, r, 0, Math.PI*2);
+      paintHullCtx.fill();
+      layers.paintHull.tex.needsUpdate = true;
+    }
+
+    function drawFrame(pointsRaw) {
+      frameCtx.clearRect(0,0,LRES,LRES);
+      for (const p of pointsRaw) paintContactDot(p.x, p.z);
+      const points = denoisePoints(pointsRaw);
+      let hull = null;
+      if (points.length >= 3) {
+        const pts2 = points.map(p=>({x:p.x,y:p.z}));
+        hull = hullMonotoneChain(pts2);
+      }
+
+      if (hull && hull.length>2) {
+        if (layerPaintHull) {
+          paintHullCtx.save();
+          paintHullCtx.globalAlpha=0.18; paintHullCtx.fillStyle='#22c55e';
+          paintHullCtx.beginPath();
+          for (let i=0;i<hull.length;i++){
+            const p=hull[i]; const x=((p.x+CFG.PLANE_SIZE/2)/CFG.PLANE_SIZE)*LRES; const y=((p.y+CFG.PLANE_SIZE/2)/CFG.PLANE_SIZE)*LRES;
+            if (i===0) paintHullCtx.moveTo(x,y); else paintHullCtx.lineTo(x,y);
+          }
+          const p0=hull[0]; paintHullCtx.lineTo(((p0.x+CFG.PLANE_SIZE/2)/CFG.PLANE_SIZE)*LRES, ((p0.y+CFG.PLANE_SIZE/2)/CFG.PLANE_SIZE)*LRES);
+          paintHullCtx.closePath(); paintHullCtx.fill();
+          paintHullCtx.restore(); layers.paintHull.tex.needsUpdate=true;
+        }
+        // accumulators
+        accMaskCtx.clearRect(0,0,ACC_W,ACC_H);
+        accMaskCtx.fillStyle='#fff'; accMaskCtx.beginPath();
+        for (let i=0;i<hull.length;i++){
+          const p=hull[i]; const x=((p.x+CFG.PLANE_SIZE/2)/CFG.PLANE_SIZE)*ACC_W; const y=((p.y+CFG.PLANE_SIZE/2)/CFG.PLANE_SIZE)*ACC_H;
+          if (i===0) accMaskCtx.moveTo(x,y); else accMaskCtx.lineTo(x,y);
+        }
+        const hp0=hull[0]; accMaskCtx.lineTo(((hp0.x+CFG.PLANE_SIZE/2)/CFG.PLANE_SIZE)*ACC_W, ((hp0.y+CFG.PLANE_SIZE/2)/CFG.PLANE_SIZE)*ACC_H);
+        accMaskCtx.closePath(); accMaskCtx.fill();
+        const img = accMaskCtx.getImageData(0,0,ACC_W,ACC_H).data;
+        let vx = objVel.x, vz = objVel.z; let vlen=Math.hypot(vx,vz); if (vlen>1e-6){ vx/=vlen; vz/=vlen; } else { vx=0; vz=0; }
+        for (let idx=0, j=0;j<ACC_H;j++){
+          for (let i=0;i<ACC_W;i++,idx++){
+            const a = img[(j*ACC_W+i)*4+3];
+            if (a>0){ acc[idx]++; flowX[idx]+=vx; flowZ[idx]+=vz; flowC[idx]++; }
+          }
+        }
+
+        if (layerHull) {
+          frameCtx.strokeStyle='#22c55e'; frameCtx.lineWidth=3; frameCtx.beginPath();
+          for (let i=0;i<hull.length;i++){
+            const a=hull[i]; const {u,v}=worldToUV(a.x,a.y); const x=u*LRES,y=v*LRES;
+            if (i===0) frameCtx.moveTo(x,y); else frameCtx.lineTo(x,y);
+          }
+          const a0=hull[0]; const uv0=worldToUV(a0.x,a0.y); frameCtx.lineTo(uv0.u*LRES, uv0.v*LRES); frameCtx.stroke(); layers.frame.tex.needsUpdate=true;
+        }
+
+        if (points.length >= 4 && layerHull) {
+          const om=ombbCalipers(hull);
+          if (om){
+            const rect = buildRect(om.center.x, om.center.z, om.ang, om.width, om.height);
+            lastRect = rect;
+            frameCtx.strokeStyle='#22c55e'; frameCtx.lineWidth=2; frameCtx.beginPath();
+            rect.forEach((p,i)=>{ const uv=worldToUV(p.x,p.z); const x=uv.u*LRES, y=uv.v*LRES; if (i===0) frameCtx.moveTo(x,y); else frameCtx.lineTo(x,y); });
+            const uv00=worldToUV(rect[0].x,rect[0].z); frameCtx.lineTo(uv00.u*LRES, uv00.v*LRES); frameCtx.stroke(); layers.frame.tex.needsUpdate=true;
+            document.getElementById('obbAng').textContent = ( ((om.ang%Math.PI)+Math.PI)%Math.PI * 180/Math.PI ).toFixed(2)+'°';
+          } else { lastRect=null; document.getElementById('obbAng').textContent='—'; }
+        } else {
+          const bb = aabbOfPoints(points);
+          const cx = (bb.minX+bb.maxX)/2, cz=(bb.minZ+bb.maxZ)/2;
+          const w = Math.max(CFG.MIN_BOX_MARGIN*2, (bb.maxX-bb.minX)+CFG.MIN_BOX_MARGIN*2);
+          const h = Math.max(CFG.MIN_BOX_MARGIN*2, (bb.maxZ-bb.minZ)+CFG.MIN_BOX_MARGIN*2);
+          const rect = buildRect(cx, cz, 0, w, h);
+          lastRect = rect;
+          if (layerHull) {
+            frameCtx.strokeStyle='#22c55e'; frameCtx.lineWidth=2; frameCtx.setLineDash([6,6]);
+            frameCtx.beginPath();
+            rect.forEach((p,i)=>{ const uv=worldToUV(p.x,p.z); const x=uv.u*LRES, y=uv.v*LRES; if (i===0) frameCtx.moveTo(x,y); else frameCtx.lineTo(x,y); });
+            const uv00=worldToUV(rect[0].x,rect[0].z); frameCtx.lineTo(uv00.u*LRES, uv00.v*LRES);
+            frameCtx.stroke(); frameCtx.setLineDash([]); layers.frame.tex.needsUpdate=true;
+          }
+          document.getElementById('obbAng').textContent='—';
+        }
+      } else {
+        if (points.length>0) {
+          const bb = aabbOfPoints(points);
+          const cx = (bb.minX+bb.maxX)/2, cz = (bb.minZ+bb.maxZ)/2;
+          const rect = buildRect(cx, cz, 0, CFG.MIN_BOX_MARGIN*2, CFG.MIN_BOX_MARGIN*2);
+          lastRect = rect;
+          if (layerHull) {
+            frameCtx.strokeStyle='#22c55e'; frameCtx.lineWidth=2; frameCtx.setLineDash([6,6]);
+            frameCtx.beginPath();
+            rect.forEach((p,i)=>{ const uv=worldToUV(p.x,p.z); const x=uv.u*LRES, y=uv.v*LRES; if (i===0) frameCtx.moveTo(x,y); else frameCtx.lineTo(x,y); });
+            const uv00=worldToUV(rect[0].x,rect[0].z); frameCtx.lineTo(uv00.u*LRES, uv00.v*LRES);
+            frameCtx.stroke(); frameCtx.setLineDash([]); layers.frame.tex.needsUpdate=true;
+          }
+        } else {
+          lastRect = null;
+        }
+        document.getElementById('obbAng').textContent='—';
+      }
+
+      // Means (centroid + geometric mean on their layers)
+      if (pointsRaw.length>0){
+        let sx=0, sz=0; for (const p of pointsRaw){ sx+=p.x; sz+=p.z; }
+        const cen={x:sx/pointsRaw.length, z:sz/pointsRaw.length};
+        const uv=worldToUV(cen.x,cen.z);
+        frameCtx.strokeStyle='#a855f7'; frameCtx.lineWidth=2;
+        frameCtx.beginPath(); frameCtx.moveTo(uv.u*LRES-8, uv.v*LRES); frameCtx.lineTo(uv.u*LRES+8, uv.v*LRES); frameCtx.stroke();
+        frameCtx.beginPath(); frameCtx.moveTo(uv.u*LRES, uv.v*LRES-8); frameCtx.lineTo(uv.u*LRES, uv.v*LRES+8); frameCtx.stroke();
+        layers.frame.tex.needsUpdate=true;
+        document.getElementById('centroid').textContent = `${cen.x.toFixed(3)}, ${cen.z.toFixed(3)}`;
+
+        let minx=Infinity, minz=Infinity; for (const p of pointsRaw){ if (p.x<minx) minx=p.x; if (p.z<minz) minz=p.z; }
+        const shiftx=(minx<=0)?(1-minx):0, shiftz=(minz<=0)?(1-minz):0;
+        let lx=0,lz=0; for (const p of pointsRaw){ lx+=Math.log(p.x+shiftx); lz+=Math.log(p.z+shiftz); }
+        const gmn={ x: Math.exp(lx/pointsRaw.length)-shiftx, z: Math.exp(lz/pointsRaw.length)-shiftz };
+        const uvG=worldToUV(gmn.x,gmn.z);
+        paintGeomCtx.strokeStyle='#d946ef'; paintGeomCtx.lineWidth=2;
+        paintGeomCtx.beginPath(); paintGeomCtx.moveTo(uvG.u*LRES-10, uvG.v*LRES); paintGeomCtx.lineTo(uvG.u*LRES+10, uvG.v*LRES); paintGeomCtx.stroke();
+        paintGeomCtx.beginPath(); paintGeomCtx.moveTo(uvG.u*LRES, uvG.v*LRES-10); paintGeomCtx.lineTo(uvG.u*LRES, uvG.v*LRES+10); paintGeomCtx.stroke();
+        layers.paintGeom.tex.needsUpdate=true;
+        document.getElementById('gmean').textContent = `${gmn.x.toFixed(3)}, ${gmn.z.toFixed(3)}`;
+      }
+
+      // Separate Field, Flow, and Combined rendering
+      for (let idx=0; idx<acc.length; idx++){
+        // Field (grayscale intensity)
+        if (layerField) {
+          let t = acc[idx] >= CFG.FIELD_WHITE_AT ? 1.0 : (acc[idx]/CFG.FIELD_WHITE_AT);
+          t = Math.max(0, Math.min(1, Math.pow(t, CFG.FIELD_GAMMA)));
+          const val = Math.round(t*255);
+          fieldImg.data[4*idx]=val; fieldImg.data[4*idx+1]=val; fieldImg.data[4*idx+2]=val; fieldImg.data[4*idx+3]=255;
+        }
+        
+        // Flow (directional color)
+        if (layerFlow) {
+          const c = flowC[idx];
+          if (c === 0) {
+            flowImg.data[4*idx]=0; flowImg.data[4*idx+1]=0; flowImg.data[4*idx+2]=0; flowImg.data[4*idx+3]=255;
+          } else {
+            const sx = flowX[idx]/c, sz = flowZ[idx]/c;
+            const ang = Math.atan2(sz, sx);
+            const hue = (ang/(2*Math.PI) + 1) % 1;
+            const sat = 1; // Full saturation for flow
+            const val = Math.min(1, c/60); // Brightness based on flow count
+            const [r,g,b] = hsvToRgb(hue, sat, val);
+            flowImg.data[4*idx]=r; flowImg.data[4*idx+1]=g; flowImg.data[4*idx+2]=b; flowImg.data[4*idx+3]=255;
+          }
+        }
+        
+        // Combined (field + flow)
+        if (layerCombined) {
+          let t = acc[idx] >= CFG.FIELD_WHITE_AT ? 1.0 : (acc[idx]/CFG.FIELD_WHITE_AT);
+          t = Math.max(0, Math.min(1, Math.pow(t, CFG.FIELD_GAMMA)));
+          const c = flowC[idx];
+          if (c === 0) {
+            const val = Math.round(t*255);
+            combinedImg.data[4*idx]=val; combinedImg.data[4*idx+1]=val; combinedImg.data[4*idx+2]=val; combinedImg.data[4*idx+3]=255;
+          } else {
+            const sx = flowX[idx]/c, sz = flowZ[idx]/c;
+            const ang = Math.atan2(sz, sx);
+            const hue = (ang/(2*Math.PI) + 1) % 1;
+            const sat = Math.min(1, c/60);
+            const val = t;
+            const [r,g,b] = hsvToRgb(hue, sat, val);
+            combinedImg.data[4*idx]=r; combinedImg.data[4*idx+1]=g; combinedImg.data[4*idx+2]=b; combinedImg.data[4*idx+3]=255;
+          }
+        }
+      }
+      
+      // Update field canvas
+      if (layerField) {
+        const tmp=document.createElement('canvas'); tmp.width=ACC_W; tmp.height=ACC_H;
+        tmp.getContext('2d').putImageData(fieldImg,0,0);
+        fieldCtx.clearRect(0,0,LRES,LRES); fieldCtx.imageSmoothingEnabled=false; fieldCtx.drawImage(tmp,0,0,LRES,LRES);
+        layers.field.tex.needsUpdate=true;
+        fieldBlendTexture.needsUpdate=true; // Update shader blend texture
+      }
+      
+      // Update flow canvas
+      if (layerFlow) {
+        const tmp=document.createElement('canvas'); tmp.width=ACC_W; tmp.height=ACC_H;
+        tmp.getContext('2d').putImageData(flowImg,0,0);
+        flowCtx.clearRect(0,0,LRES,LRES); flowCtx.imageSmoothingEnabled=false; flowCtx.drawImage(tmp,0,0,LRES,LRES);
+        layers.flow.tex.needsUpdate=true;
+      }
+      
+      // Update combined canvas
+      if (layerCombined) {
+        const tmp=document.createElement('canvas'); tmp.width=ACC_W; tmp.height=ACC_H;
+        tmp.getContext('2d').putImageData(combinedImg,0,0);
+        combinedCtx.clearRect(0,0,LRES,LRES); combinedCtx.imageSmoothingEnabled=false; combinedCtx.drawImage(tmp,0,0,LRES,LRES);
+        layers.combined.tex.needsUpdate=true;
+      }
+
+      // Update shader-based variant blending
+      updateShaderBlending();
+    }
+
+    // ====== PHYSICS ======
+    const cfg = new A.btDefaultCollisionConfiguration();
+    const dispatcher = new A.btCollisionDispatcher(cfg);
+    const broadphase = new A.btDbvtBroadphase();
+    const solver = new A.btSequentialImpulseConstraintSolver();
+    const world = new A.btDiscreteDynamicsWorld(dispatcher, broadphase, solver, cfg);
+    world.setGravity(new A.btVector3(0,-9.81,0));
+    const hasGImpact = !!(A.btGImpactCollisionAlgorithm && A.btGImpactMeshShape);
+    if (hasGImpact && A.btGImpactCollisionAlgorithm.prototype) {
+      A.btGImpactCollisionAlgorithm.prototype.registerAlgorithm(dispatcher);
+    }
+
+    // Static ground
+    const groundShape = new A.btBoxShape(new A.btVector3(CFG.PLANE_SIZE/2, .5, CFG.PLANE_SIZE/2));
+    const gTr = new A.btTransform(); gTr.setIdentity(); gTr.setOrigin(new A.btVector3(0,-.5,0));
+    const gMotion = new A.btDefaultMotionState(gTr);
+    const gInfo = new A.btRigidBodyConstructionInfo(0, gMotion, groundShape, new A.btVector3(0,0,0));
+    const groundBody = new A.btRigidBody(gInfo);
+    groundBody.setFriction(1.0); groundBody.setRestitution(0.0); world.addRigidBody(groundBody);
+
+    // Dynamic bodies
+    let speedX=15, speedZ=0, friction=0.8, restitution=0.1, ccdEnabled=true, gravity=9.81;
+    let shapeType='cube'; let dynMesh=null, dynBody=null; const mass=2;
+    function makeGImpactFromGeometry(geom){
+      const pos=geom.attributes.position.array; const idx=geom.index?geom.index.array:null;
+      const triMesh=new A.btTriangleMesh();
+      const addTri=(i0,i1,i2)=>{
+        const v0=new A.btVector3(pos[3*i0],pos[3*i0+1],pos[3*i0+2]);
+        const v1=new A.btVector3(pos[3*i1],pos[3*i1+1],pos[3*i1+2]);
+        const v2=new A.btVector3(pos[3*i2],pos[3*i2+1],pos[3*i2+2]);
+        triMesh.addTriangle(v0,v1,v2,true); A.destroy(v0); A.destroy(v1); A.destroy(v2);
+      };
+      if (idx){ for (let i=0;i<idx.length;i+=3) addTri(idx[i],idx[i+1],idx[i+2]); }
+      else { for (let i=0;i<pos.length/3;i+=3) addTri(i,i+1,i+2); }
+      const shape=new A.btGImpactMeshShape(triMesh); shape.setMargin(0.004); shape.updateBound(); return shape;
+    }
+    function makeConvexHullFromGeometry(geom){
+      const pos=geom.attributes.position.array; const shape=new A.btConvexHullShape(); const seen=new Set();
+      for (let i=0;i<pos.length;i+=3){ const x=pos[i],y=pos[i+1],z=pos[i+2]; const key=x.toFixed(4)+','+y.toFixed(4)+','+z.toFixed(4);
+        if (seen.has(key)) continue; seen.add(key); const v=new A.btVector3(x,y,z); shape.addPoint(v,true); A.destroy(v);
+      } shape.setMargin(0.004); return shape;
+    }
+    function makePuck(R=1.1,r=0.35,radialSeg=64,tubularSeg=128){
+      const geom=new THREE.TorusGeometry(R,r,radialSeg,tubularSeg); geom.rotateX(Math.PI/2);
+      const mat=new THREE.MeshStandardMaterial({color:0xf59e0b,metalness:0.1,roughness:0.6});
+      const mesh=new THREE.Mesh(geom,mat); scene.add(mesh);
+      let shape=hasGImpact?makeGImpactFromGeometry(geom):makeConvexHullFromGeometry(geom);
+      const tr=new A.btTransform(); tr.setIdentity(); const motion=new A.btDefaultMotionState(tr);
+      const inertia=new A.btVector3(0,0,0); shape.calculateLocalInertia(mass,inertia);
+      const info=new A.btRigidBodyConstructionInfo(mass,motion,shape,inertia);
+      const body=new A.btRigidBody(info);
+      body.setFriction(friction); body.setRestitution(restitution); body.setDamping(0.01,0.01);
+      if (ccdEnabled){ body.setCcdSweptSphereRadius(r*0.7); body.setCcdMotionThreshold(0.01); }
+      body.setContactProcessingThreshold(0); world.addRigidBody(body); return {mesh,body};
+    }
+    function makeCube(size=2, seg=10){
+      const geom=new THREE.BoxGeometry(size,size,size,seg,seg,seg);
+      const mat=new THREE.MeshStandardMaterial({color:0x3b82f6,metalness:0.1,roughness:0.6});
+      const mesh=new THREE.Mesh(geom,mat); scene.add(mesh);
+      let body,shape;
+      if (hasGImpact){ shape=makeGImpactFromGeometry(geom);
+        const tr=new A.btTransform(); tr.setIdentity(); const motion=new A.btDefaultMotionState(tr);
+        const inertia=new A.btVector3(0,0,0); shape.calculateLocalInertia(mass,inertia);
+        const info=new A.btRigidBodyConstructionInfo(mass,motion,shape,inertia); body=new A.btRigidBody(info);
+      } else { shape=new A.btBoxShape(new A.btVector3(size/2,size/2,size/2));
+        const tr=new A.btTransform(); tr.setIdentity(); const motion=new A.btDefaultMotionState(tr);
+        const inertia=new A.btVector3(0,0,0); shape.calculateLocalInertia(mass,inertia);
+        const info=new A.btRigidBodyConstructionInfo(mass,motion,shape,inertia); body=new A.btRigidBody(info);
+      }
+      body.setFriction(friction); body.setRestitution(restitution); body.setDamping(0.01,0.01);
+      if (ccdEnabled){ body.setCcdSweptSphereRadius(size*0.25); body.setCcdMotionThreshold(0.01); }
+      body.setContactProcessingThreshold(0); world.addRigidBody(body);
+      return {mesh,body};
+    }
+    function destroyCurrent(){ if (dynMesh) scene.remove(dynMesh); if (dynBody){ world.removeRigidBody(dynBody); A.destroy(dynBody); } dynMesh=null; dynBody=null; }
+    function startBody(){ destroyCurrent(); const made=(shapeType==='puck')?makePuck(1.1,0.35,64,128):makeCube(2,10); dynMesh=made.mesh; dynBody=made.body; resetBody(); }
+    function resetBody(){
+      if (!dynMesh||!dynBody) return;
+      const tr=new A.btTransform(); tr.setIdentity(); const x=-CFG.PLANE_SIZE/2+2, y=4.5, z=0;
+      tr.setOrigin(new A.btVector3(x,y,z)); dynBody.setWorldTransform(tr); dynBody.getMotionState().setWorldTransform(tr);
+      dynBody.setLinearVelocity(new A.btVector3(speedX,0,speedZ)); dynBody.setAngularVelocity(new A.btVector3(0,0,0));
+      dynBody.clearForces(); dynBody.activate(); dynMesh.position.set(x,y,z); dynMesh.quaternion.set(0,0,0,1);
+      frameCtx.clearRect(0,0,LRES,LRES); layers.frame.tex.needsUpdate=true;
+    }
+
+    // ====== CONTACT SAMPLING ======
+    const tmpTr = new A.btTransform();
+    function sampleContacts(){
+      const manifolds = dispatcher.getNumManifolds();
+      const pts=[]; let count=0;
+      for (let i=0;i<manifolds;i++){
+        const m=dispatcher.getManifoldByIndexInternal(i); const n=m.getNumContacts();
+        for (let j=0;j<n;j++){
+          const p=m.getContactPoint(j); const a=p.get_m_positionWorldOnA(); const b=p.get_m_positionWorldOnB();
+          const cx=(a.x()+b.x())*0.5, cz=(a.z()+b.z())*0.5; pts.push({x:cx,z:cz}); count++;
+        }
+      }
+      document.getElementById('contacts').textContent=String(count);
+      return pts;
+    }
+
+    // === PiP camera fit ===
+    function updatePipCameraFromRect(){
+      if (!pipEnabled || !lastRect) return false;
+      let minX=Infinity,maxX=-Infinity,minZ=Infinity,maxZ=-Infinity;
+      for (const p of lastRect){ if (p.x<minX) minX=p.x; if (p.x>maxX) maxX=p.x; if (p.z<minZ) minZ=p.z; if (p.z>maxZ) maxZ=p.z; }
+      const cx=(minX+maxX)/2, cz=(minZ+maxZ)/2;
+      const w=(maxX-minX)*CFG.PIP_MARGIN, h=(maxZ-minZ)*CFG.PIP_MARGIN;
+      const halfW=Math.max(0.5, w/2), halfH=Math.max(0.5,h/2);
+      pipCam.left=cx-halfW; pipCam.right=cx+halfW; pipCam.bottom=cz-halfH; pipCam.top=cz+halfH; pipCam.near=0.01; pipCam.far=100;
+      pipCam.updateProjectionMatrix(); pipCam.position.set(0,20,0); pipCam.lookAt(0,0,0); return true;
+    }
+
+    // ====== MAIN LOOP ======
+    let frame=0, lastT=performance.now(), fps=0;
+    function animate(){
+      requestAnimationFrame(animate);
+      frame++; const now=performance.now(); if (now-lastT>500){ fps = Math.round(1000/renderer.info.render.frame); lastT=now; document.getElementById('fps').textContent=String(fps); }
+      document.getElementById('frame').textContent = String(frame);
+      world.stepSimulation(1/60, 10, 1/120);
+      if (dynBody && dynMesh){
+        dynBody.getMotionState().getWorldTransform(tmpTr);
+        const p=tmpTr.getOrigin(); const q=tmpTr.getRotation();
+        dynMesh.position.set(p.x(),p.y(),p.z()); dynMesh.quaternion.set(q.x(),q.y(),q.z(),q.w());
+        const lv=dynBody.getLinearVelocity(); objVel.x=lv.x(); objVel.z=lv.z();
+        if (p.x() > CFG.PLANE_SIZE/2 - 2) resetBody();
+      }
+      const pts=sampleContacts();
+      drawFrame(pts);
+
+      renderer.setScissorTest(false);
+      renderer.setViewport(0,0,renderer.domElement.width,renderer.domElement.height);
+      renderer.setScissor(0,0,renderer.domElement.width,renderer.domElement.height);
+      renderer.render(scene,camera);
+
+      const pipBox=document.getElementById('pipBox');
+      if (pipEnabled && updatePipCameraFromRect()){
+        const dpr=renderer.getPixelRatio(); const W=260,H=260; const x=innerWidth-W-10, y=10;
+        renderer.setScissorTest(true);
+        renderer.setViewport(x*dpr,(innerHeight-y-H)*dpr,W*dpr,H*dpr);
+        renderer.setScissor(x*dpr,(innerHeight-y-H)*dpr,W*dpr,H*dpr);
+        renderer.render(scene,pipCam);
+        pipBox.style.right='10px'; pipBox.style.top='10px'; pipBox.style.width=W+'px'; pipBox.style.height=H+'px';
+      } else { pipBox.classList.add('hidden'); }
+    }
+
+    // ====== UI HOOKS ======
+    document.getElementById('loadingScreen').style.display='none';
+    document.getElementById('hud').style.display='flex';
+    setVisibility(); startBody(); animate();
+
+    document.getElementById('start').onclick = ()=> startBody();
+    document.getElementById('reset').onclick = ()=> resetBody();
+    document.getElementById('clearPaint').onclick = ()=>{
+      paintHullCtx.fillStyle = '#0e1a15'; paintHullCtx.fillRect(0,0,LRES,LRES);
+      paintGeomCtx.clearRect(0,0,LRES,LRES);
+      fieldCtx.clearRect(0,0,LRES,LRES);
+      flowCtx.clearRect(0,0,LRES,LRES);
+      combinedCtx.clearRect(0,0,LRES,LRES);
+      frameCtx.clearRect(0,0,LRES,LRES);
+      layers.paintHull.tex.needsUpdate = layers.paintGeom.tex.needsUpdate = true;
+      layers.field.tex.needsUpdate = layers.flow.tex.needsUpdate = layers.combined.tex.needsUpdate = true;
+      layers.frame.tex.needsUpdate = true;
+      acc.fill(0); flowX.fill(0); flowZ.fill(0); flowC.fill(0);
+    };
+
+    // Layers
+    document.getElementById('layerContacts').onchange = (e)=>{ layerContacts=e.target.checked; };
+    document.getElementById('layerPaintHull').onchange = (e)=>{ layerPaintHull=e.target.checked; setVisibility(); };
+    document.getElementById('layerGeomMean').onchange = (e)=>{ layerGeomMean=e.target.checked; setVisibility(); };
+    document.getElementById('layerField').onchange = (e)=>{ layerField=e.target.checked; setVisibility(); };
+    document.getElementById('layerFlow').onchange = (e)=>{ layerFlow=e.target.checked; setVisibility(); };
+    document.getElementById('layerCombined').onchange = (e)=>{ layerCombined=e.target.checked; setVisibility(); };
+    document.getElementById('layerHull').onchange = (e)=>{ layerHull=e.target.checked; setVisibility(); };
+    document.getElementById('pip').onchange = (e)=>{ pipEnabled = e.target.checked; setVisibility(); };
+
+    // Save buttons
+    document.getElementById('saveField').onclick = ()=> saveCanvasAsPNG(fieldCanvas, 'field.png');
+    document.getElementById('saveFlow').onclick = ()=> saveCanvasAsPNG(flowCanvas, 'flow.png');
+    document.getElementById('saveCombined').onclick = ()=> saveCanvasAsPNG(combinedCanvas, 'combined.png');
+
+    // Body and sliders
+    document.getElementById('shape').onchange = (e)=>{ shapeType=e.target.value; startBody(); };
+    document.getElementById('speedX').oninput = (e)=>{ const s=parseInt(e.target.value); document.getElementById('speedXVal').textContent=String(s); speedX=s; if(dynBody){ const v=dynBody.getLinearVelocity(); dynBody.setLinearVelocity(new A.btVector3(speedX,v.y(),speedZ)); dynBody.activate(); } };
+    document.getElementById('speedZ').oninput = (e)=>{ const s=parseInt(e.target.value); document.getElementById('speedZVal').textContent=String(s); speedZ=s; if(dynBody){ const v=dynBody.getLinearVelocity(); dynBody.setLinearVelocity(new A.btVector3(speedX,v.y(),speedZ)); dynBody.activate(); } };
+    document.getElementById('gravity').oninput = (e)=>{ 
+      const g = parseInt(e.target.value) / 100; 
+      document.getElementById('gravityVal').textContent = g.toFixed(2); 
+      gravity = g; 
+      world.setGravity(new A.btVector3(0, -gravity, 0)); 
+    };
+    document.getElementById('friction').oninput = (e)=>{ const f=parseInt(e.target.value)/100; document.getElementById('frictionVal').textContent=f.toFixed(2); friction=f; if(dynBody){ dynBody.setFriction(friction); dynBody.activate(); } };
+    document.getElementById('restitution').oninput = (e)=>{ const r=parseInt(e.target.value)/100; document.getElementById('restitutionVal').textContent=r.toFixed(2); restitution=r; if(dynBody){ dynBody.setRestitution(restitution); dynBody.activate(); } };
+    document.getElementById('ccd').onchange = (e)=>{ const on=e.target.checked; ccdEnabled=on; if(dynBody){ if(on){ dynBody.setCcdSweptSphereRadius(0.25); dynBody.setCcdMotionThreshold(0.01);} else { dynBody.setCcdSweptSphereRadius(0); dynBody.setCcdMotionThreshold(0);} dynBody.activate(); } };
+
+    // N-variant controls
+    document.getElementById('loadPlane').onclick = async ()=>{
+      const fi = document.getElementById('planeFile');
+      if (fi.files && fi.files[0]) {
+        const url = URL.createObjectURL(fi.files[0]);
+        await loadPlaneGLBFrom(url);
+        URL.revokeObjectURL(url);
+      } else {
+        await loadPlaneGLBFrom('plane.glb');
+      }
+    };
+    document.getElementById('blendDrive').onchange = (e)=>{ 
+      driveBlend = e.target.checked; 
+      updateShaderBlending();
+    };
+
+    // Resize
+    addEventListener('resize', ()=>{
+      const aspect=innerWidth/innerHeight;
+      camera.left=-orthoHalf*aspect; camera.right=orthoHalf*aspect; camera.top=orthoHalf; camera.bottom=-orthoHalf; camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+  </script>
+</body>
+</html>
