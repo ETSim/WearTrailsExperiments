@@ -1,0 +1,1794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PiP OBB Physics - Enhanced Collision Visualization</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  body { background: #0b0b0b; color: #e5e7eb; }
+  
+  #loadingScreen { position: fixed; inset: 0; display: grid; place-items: center; gap: 10px; background:#0b0b0b; z-index: 9; }
+  .spinner { width: 44px; height: 44px; border: 3px solid rgba(168,85,247,.35); border-top-color:#a855f7; border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  
+  #hud { position: fixed; left: 10px; top: 10px; display: flex; gap: 10px; flex-wrap: wrap; z-index: 5; max-width: 50%; }
+  .panel { background: rgba(18,18,18,.92); border: 1px solid rgba(255,255,255,.08); border-radius: 10px; padding: 10px 12px; }
+  
+  #controls button, #controls select, #controls input[type="range"], #controls input[type="checkbox"], 
+  #controls input[type="file"], #controls input[type="number"] { 
+    background:#111827; border:1px solid #374151; color:#e5e7eb; padding:6px 10px; 
+    border-radius:8px; cursor:pointer; font-size:12px; 
+  }
+  #controls button:hover { background:#1f2937; transform: translateY(-1px); }
+  #controls .row { display:flex; align-items:center; gap:8px; margin-top:6px; flex-wrap: wrap; }
+  
+  #stats { font-size:12px; color:#9ca3af; }
+  .label { min-width: 140px; color:#cbd5e1; }
+  .pill { padding:2px 6px; border-radius:6px; background:#0f172a; border:1px solid #1f2937; font-size:11px; }
+  
+  .pip-container { 
+    position: fixed; right: 10px; top: 10px;
+    display: flex; flex-direction: column; gap: 10px; z-index: 4; 
+  }
+  .pip { 
+    width: 260px; height: 260px; border: 2px solid #22c55e; 
+    border-radius: 8px; background:#000; overflow:hidden; position: relative;
+  }
+  .pip canvas { width:100%; height:100%; display:block; }
+  .pip-label { 
+    position: absolute; top: 5px; left: 5px; 
+    background: rgba(0,0,0,0.7); padding: 2px 8px; 
+    border-radius: 4px; font-size: 11px; color: #fff; z-index: 1;
+  }
+  #pip1 { border-color:#16a34a; }
+  #pip2 { border-color:#60a5fa; }
+  #pip3 { border-color:#f59e0b; }
+  
+  .save-btn { 
+    background: #059669 !important; 
+    border-color: #047857 !important; 
+  }
+  .save-btn:hover { 
+    background: #047857 !important; 
+  }
+</style>
+</head>
+<body>
+  <div id="loadingScreen">
+    <div class="spinner"></div>
+    <div>Loading...</div>
+  </div>
+
+  <div id="hud" style="display:none;">
+    <div class="panel" id="controls">
+      <div style="margin-bottom:6px; font-weight:600; color:#a855f7;">Controls</div>
+      
+      <div class="row">
+        <span class="label">Body</span>
+        <select id="shape">
+          <option value="cube10" selected>Cube (subdiv 10)</option>
+          <option value="cube20">Cube (subdiv 20)</option>
+          <option value="cube50">Cube (subdiv 50)</option>
+          <option value="puck">Puck (torus)</option>
+          <option value="custom">Custom GLB</option>
+        </select>
+        <button id="start">Start</button>
+        <button id="reset">Reset</button>
+      </div>
+      
+      <div class="row" id="customBodyRow" style="display:none;">
+        <span class="label">Body GLB</span>
+        <input id="bodyFile" type="file" accept=".glb,.gltf" />
+      </div>
+      
+      <div class="row">
+        <span class="label">Bounding Box</span>
+        <select id="bboxAlgo">
+          <option value="aabb">AABB (Axis-Aligned)</option>
+          <option value="obb">OBB (PCA-based)</option>
+          <option value="ombb" selected>OMBB (Rotating Calipers)</option>
+          <option value="kdop8">KDOP-8 → OBB</option>
+          <option value="hybrid">Hybrid (Quantized + Quantile)</option>
+        </select>
+      </div>
+      
+      <div class="row">
+        <span class="label">Padding Width</span>
+        <input id="paddingWidth" type="range" min="100" max="400" value="150" step="10" />
+        <span id="paddingWidthVal" class="pill">1.50x</span>
+      </div>
+      
+      <div class="row">
+        <span class="label">Padding Height</span>
+        <input id="paddingHeight" type="range" min="100" max="400" value="150" step="10" />
+        <span id="paddingHeightVal" class="pill">1.50x</span>
+      </div>
+      
+      <div class="row">
+        <span class="label">Padding Depth</span>
+        <input id="paddingDepth" type="range" min="1" max="500" value="150" step="1" />
+        <span id="paddingDepthVal" class="pill">1.50x</span>
+      </div>
+      
+      <div class="row">
+        <span class="label">Speed X</span>
+        <input id="speedX" type="range" min="-60" max="60" value="15" step="1" />
+        <span id="speedXVal" class="pill">15</span>
+      </div>
+      
+      <div class="row">
+        <span class="label">Speed Z</span>
+        <input id="speedZ" type="range" min="-60" max="60" value="0" step="1" />
+        <span id="speedZVal" class="pill">0</span>
+      </div>
+      
+      <div class="row">
+  <span class="label">Force X</span>
+  <input id="forceX" type="range" min="-2000" max="2000" value="0" step="10" />
+  <span id="forceXVal" class="pill">0</span>
+</div>
+<div class="row">
+  <span class="label">Force Z</span>
+  <input id="forceZ" type="range" min="-2000" max="2000" value="0" step="10" />
+  <span id="forceZVal" class="pill">0</span>
+</div>
+<div class="row">
+        <span class="label">Gravity</span>
+        <input id="gravity" type="range" min="981" max="20000" value="981" step="1" />
+        <span id="gravityVal" class="pill">9.81</span>
+      </div>
+      
+      <div class="row">
+        <span class="label">Friction</span>
+        <input id="friction" type="range" min="0" max="2.0" value="0.8" step="0.01" />
+        <span id="frictionVal" class="pill">0.80</span>
+      </div>
+      
+      <div class="row">
+        <span class="label">Restitution</span>
+        <input id="restitution" type="range" min="0" max="1.0" value="0.1" step="0.01" />
+        <span id="restitutionVal" class="pill">0.10</span>
+      </div>
+      
+      <div class="row">
+        <label><input type="checkbox" id="pipEnabled" checked /> PiP Views</label>
+        <label><input type="checkbox" id="showOBB" checked /> Show 3D Box</label>
+      </div>
+      
+      <div class="row">
+        <label><input type="checkbox" id="showContacts" checked /> Contact Points</label>
+        <label><input type="checkbox" id="showGeomMean" checked /> Geometric Mean</label>
+      </div>
+      
+      <div class="row">
+        <label><input type="checkbox" id="enableStamping" checked /> Stamp on Ground</label>
+        <button id="clearStamps" class="save-btn">Clear Stamps</button>
+        <button id="exportGround" class="save-btn">Export Ground</button>
+      </div>
+      
+      <div class="row">
+        <span class="label">Stamp Opacity</span>
+        <input id="stampOpacity" type="range" min="10" max="100" value="80" step="5" />
+        <span id="stampOpacityVal" class="pill">0.80</span>
+      </div>
+      
+      <div class="row">
+        <button id="regenerateTextures">Regenerate Textures</button>
+        <button id="saveIntersection" class="save-btn">Save Intersection</button>
+      </div>
+    </div>
+
+    <div class="panel" id="stats">
+      <div><span class="pill">Frame</span> <span id="frame">0</span></div>
+      <div><span class="pill">Contacts</span> <span id="contacts">0</span></div>
+      <div><span class="pill">OBB Angle</span> <span id="obbAng">—</span></div>
+      <div><span class="pill">Geom Mean</span> <span id="gmean">—</span></div>
+      <div><span class="pill">Box Type</span> <span id="bboxType">OMBB</span></div>
+      <div><span class="pill">FPS</span> <span id="fps">0</span></div>
+    </div>
+  </div>
+
+  <div class="pip-container" id="pipContainer">
+    <div id="pip1" class="pip">
+      <div class="pip-label">Top View (+n)</div>
+      <canvas id="pip1Canvas" width="260" height="260"></canvas>
+    </div>
+    <div id="pip2" class="pip">
+      <div class="pip-label">Bottom View (-n)</div>
+      <canvas id="pip2Canvas" width="260" height="260"></canvas>
+    </div>
+    <div id="pip3" class="pip">
+      <div class="pip-label">Intersection</div>
+      <canvas id="pip3Canvas" width="260" height="260"></canvas>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/ammojs3@0.0.11/dist/ammo.wasm.js"></script>
+  <script type="importmap">
+  {"imports":{
+    "three":"https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
+    "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"
+  }}
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const A = await Ammo();
+
+    // ======= Config =======
+    const CFG = {
+      PLANE_SIZE: 20,
+      PIP_W: 260,
+      PIP_H: 260,
+      OBB_DEPTH: 2.5,
+      MIN_CONTACT_SIZE: 0.05,
+      CONTACT_POINT_SIZE: 0.12,
+      GEOM_MEAN_SIZE: 0.18
+    };
+
+    // ======= Scene Setup =======
+    const aspect = innerWidth/innerHeight;
+    const orthoHalf = CFG.PLANE_SIZE*0.55;
+    const camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 200);
+    camera.position.set(12, 10, 12); 
+    camera.lookAt(0, 0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0b0b);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableRotate = true; 
+    controls.enablePan = true; 
+    controls.enableZoom = true;
+    controls.target.set(0, 0, 0);
+    controls.minDistance = 5;
+    controls.maxDistance = 50;
+    controls.maxPolarAngle = Math.PI * 0.9; // Prevent going through ground
+    controls.update();
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.7);
+    dirLight.position.set(10, 15, 5);
+    scene.add(dirLight);
+
+    // ======= Random Texture Generation =======
+    function generateRandomGroundTexture(size = 1024) {
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      
+      // Base color with slight variations
+      const baseColors = [
+        '#2a2a2a', '#353535', '#404040', '#4a4a4a',
+        '#323232', '#3c3c3c', '#454545', '#383838'
+      ];
+      
+      // Create tile pattern with random variations
+      const tileSize = 64;
+      for (let x = 0; x < size; x += tileSize) {
+        for (let y = 0; y < size; y += tileSize) {
+          // Base tile color
+          ctx.fillStyle = baseColors[Math.floor(Math.random() * baseColors.length)];
+          ctx.fillRect(x, y, tileSize, tileSize);
+          
+          // Add noise pattern
+          for (let i = 0; i < 15; i++) {
+            const nx = x + Math.random() * tileSize;
+            const ny = y + Math.random() * tileSize;
+            const radius = Math.random() * 3 + 1;
+            const opacity = Math.random() * 0.2;
+            
+            ctx.globalAlpha = opacity;
+            ctx.fillStyle = Math.random() > 0.5 ? '#000' : '#666';
+            ctx.beginPath();
+            ctx.arc(nx, ny, radius, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.globalAlpha = 1;
+          
+          // Add subtle grid lines
+          ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x, y, tileSize, tileSize);
+        }
+      }
+      
+      // Add some larger features
+      ctx.globalAlpha = 0.05;
+      for (let i = 0; i < 20; i++) {
+        const x = Math.random() * size;
+        const y = Math.random() * size;
+        const radius = Math.random() * 100 + 50;
+        
+        const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+        gradient.addColorStop(0, 'rgba(0,0,0,0.5)');
+        gradient.addColorStop(1, 'rgba(0,0,0,0)');
+        
+        ctx.fillStyle = gradient;
+        ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+      }
+      ctx.globalAlpha = 1;
+      
+      return canvas;
+    }
+
+    function generateRandomCubeTexture(size = 512) {
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      
+      // Generate random base color
+      const hue = Math.random() * 360;
+      const sat = 60 + Math.random() * 30;
+      const light = 40 + Math.random() * 20;
+      
+      // Base gradient
+      const gradient = ctx.createLinearGradient(0, 0, size, size);
+      gradient.addColorStop(0, `hsl(${hue}, ${sat}%, ${light}%)`);
+      gradient.addColorStop(0.5, `hsl(${(hue + 20) % 360}, ${sat}%, ${light + 10}%)`);
+      gradient.addColorStop(1, `hsl(${(hue - 20) % 360}, ${sat}%, ${light - 5}%)`);
+      
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, size, size);
+      
+      // Add tech pattern
+      ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${light + 20}%, 0.3)`;
+      ctx.lineWidth = 2;
+      
+      // Grid pattern
+      const gridSize = 32;
+      for (let i = 0; i < size; i += gridSize) {
+        if (Math.random() > 0.3) {
+          ctx.beginPath();
+          ctx.moveTo(i, 0);
+          ctx.lineTo(i, size);
+          ctx.stroke();
+        }
+        if (Math.random() > 0.3) {
+          ctx.beginPath();
+          ctx.moveTo(0, i);
+          ctx.lineTo(size, i);
+          ctx.stroke();
+        }
+      }
+      
+      // Add circuit-like patterns
+      ctx.strokeStyle = `hsla(${(hue + 180) % 360}, ${sat}%, ${light + 30}%, 0.4)`;
+      ctx.lineWidth = 3;
+      
+      for (let i = 0; i < 8; i++) {
+        const startX = Math.random() * size;
+        const startY = Math.random() * size;
+        
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        
+        let currentX = startX;
+        let currentY = startY;
+        
+        for (let j = 0; j < 4; j++) {
+          const dir = Math.floor(Math.random() * 4);
+          const dist = Math.random() * 100 + 20;
+          
+          switch (dir) {
+            case 0: currentX = Math.min(size, currentX + dist); break;
+            case 1: currentX = Math.max(0, currentX - dist); break;
+            case 2: currentY = Math.min(size, currentY + dist); break;
+            case 3: currentY = Math.max(0, currentY - dist); break;
+          }
+          
+          ctx.lineTo(currentX, currentY);
+          
+          // Add a node
+          if (Math.random() > 0.5) {
+            ctx.fillStyle = `hsla(${(hue + 90) % 360}, ${sat}%, ${light + 40}%, 0.6)`;
+            ctx.fillRect(currentX - 3, currentY - 3, 6, 6);
+          }
+        }
+        ctx.stroke();
+      }
+      
+      // Add some noise for texture
+      const imageData = ctx.getImageData(0, 0, size, size);
+      const data = imageData.data;
+      
+      for (let i = 0; i < data.length; i += 4) {
+        const noise = (Math.random() - 0.5) * 20;
+        data[i] = Math.max(0, Math.min(255, data[i] + noise));
+        data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + noise));
+        data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + noise));
+      }
+      
+      ctx.putImageData(imageData, 0, 0);
+      
+      return canvas;
+    }
+
+    // Ground with base texture
+    const groundBaseCanvas = generateRandomGroundTexture(2048);
+    const groundBaseTexture = new THREE.CanvasTexture(groundBaseCanvas);
+    groundBaseTexture.wrapS = THREE.RepeatWrapping;
+    groundBaseTexture.wrapT = THREE.RepeatWrapping;
+    groundBaseTexture.repeat.set(4, 4);
+    
+    // Ground stamp canvas for collision marks
+    const groundStampCanvas = document.createElement('canvas');
+    groundStampCanvas.width = 2048;
+    groundStampCanvas.height = 2048;
+    const groundStampCtx = groundStampCanvas.getContext('2d');
+    groundStampCtx.globalCompositeOperation = 'source-over';
+    groundStampCtx.clearRect(0, 0, 2048, 2048);
+    
+    const groundStampTexture = new THREE.CanvasTexture(groundStampCanvas);
+    groundStampTexture.wrapS = THREE.ClampToEdgeWrapping;
+    groundStampTexture.wrapT = THREE.ClampToEdgeWrapping;
+    
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(CFG.PLANE_SIZE, CFG.PLANE_SIZE, 100, 100),
+      new THREE.MeshStandardMaterial({ 
+        map: groundBaseTexture,
+        alphaMap: groundStampTexture,
+        transparent: true,
+        color: 0xffffff,
+        roughness: 0.9, 
+        metalness: 0.1, 
+        side: THREE.DoubleSide 
+      })
+    );
+    ground.rotation.x = -Math.PI/2;
+    ground.position.y = 0;
+    ground.receiveShadow = true;
+    scene.add(ground);
+    
+    // Add stamp overlay mesh
+    const stampOverlay = new THREE.Mesh(
+      new THREE.PlaneGeometry(CFG.PLANE_SIZE, CFG.PLANE_SIZE),
+      new THREE.MeshStandardMaterial({
+        map: groundStampTexture,
+        transparent: true,
+        opacity: 1,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.NormalBlending
+      })
+    );
+    stampOverlay.rotation.x = -Math.PI/2;
+    stampOverlay.position.y = 0.01; // Slightly above ground
+    scene.add(stampOverlay);
+
+    // Store current cube texture for regeneration
+    let currentCubeTexture = null;
+
+    // ======= Contact Point Visualization =======
+    const contactPointsGroup = new THREE.Group();
+    scene.add(contactPointsGroup);
+    
+    const geomMeanMarker = new THREE.Mesh(
+      new THREE.SphereGeometry(CFG.GEOM_MEAN_SIZE, 16, 16),
+      new THREE.MeshStandardMaterial({ 
+        color: 0xfbbf24, 
+        emissive: 0xfbbf24,
+        emissiveIntensity: 0.3,
+        metalness: 0.3,
+        roughness: 0.4
+      })
+    );
+    scene.add(geomMeanMarker);
+    geomMeanMarker.visible = false;
+
+    let showContacts = true;
+    let showGeomMean = true;
+    let paddingWidthScale = 1.5;
+    let paddingHeightScale = 1.5;
+    let paddingDepthScale = 1.5;
+    let enableStamping = true;
+    let stampOpacity = 0.8;
+
+    function updateContactPoints(samples) {
+      // Clear old markers
+      while (contactPointsGroup.children.length > 0) {
+        contactPointsGroup.remove(contactPointsGroup.children[0]);
+      }
+      
+      if (!showContacts || samples.length === 0) return;
+      
+      // Add sphere at each contact point with glow effect
+      const geom = new THREE.SphereGeometry(CFG.CONTACT_POINT_SIZE, 12, 12);
+      const mat = new THREE.MeshStandardMaterial({ 
+        color: 0xff0000,
+        emissive: 0xff0000,
+        emissiveIntensity: 0.5,
+        metalness: 0.2,
+        roughness: 0.3
+      });
+      
+      for (const pt of samples) {
+        const sphere = new THREE.Mesh(geom, mat);
+        sphere.position.set(pt.x, pt.y, pt.z);
+        contactPointsGroup.add(sphere);
+      }
+    }
+
+    function updateGeomMeanMarker(gm) {
+      if (!showGeomMean || !gm) {
+        geomMeanMarker.visible = false;
+        return;
+      }
+      geomMeanMarker.visible = true;
+      geomMeanMarker.position.set(gm.x, gm.y + 0.1, gm.z);
+    }
+
+    // ======= OBB Visualization =======
+    let obbGroup = null, obbFill = null, obbEdges = null;
+    let showOBB = true;
+    
+    function ensureOBBMeshes() {
+      if (obbGroup) return;
+      obbGroup = new THREE.Group();
+      
+      const fillGeo = new THREE.BoxGeometry(1, 1, 1);
+      const fillMat = new THREE.MeshStandardMaterial({ 
+        color: 0x22c55e, 
+        transparent: true, 
+        opacity: 0.25, 
+        metalness: 0.1, 
+        roughness: 0.7,
+        side: THREE.DoubleSide
+      });
+      obbFill = new THREE.Mesh(fillGeo, fillMat);
+      obbFill.renderOrder = 1;
+      
+      const edgesGeo = new THREE.EdgesGeometry(fillGeo);
+      const edgesMat = new THREE.LineBasicMaterial({ color: 0x22c55e, linewidth: 3 });
+      obbEdges = new THREE.LineSegments(edgesGeo, edgesMat);
+      obbEdges.renderOrder = 2;
+      
+      obbGroup.add(obbFill);
+      obbGroup.add(obbEdges);
+      scene.add(obbGroup);
+    }
+
+    function updateOBBMeshes(obb) {
+      if (!obbGroup || !obb) return;
+      obbGroup.visible = showOBB;
+      
+      const w = Math.max(0.01, obb.width) * paddingWidthScale;
+      const h = Math.max(0.01, obb.height) * paddingHeightScale;
+      const d = Math.max(0.01, obb.depth || CFG.OBB_DEPTH) * paddingDepthScale;
+      
+      const e1 = new THREE.Vector3(obb.e1.x, obb.e1.y, obb.e1.z).normalize();
+      const n = new THREE.Vector3(obb.n.x, obb.n.y, obb.n.z).normalize();
+      const e2 = new THREE.Vector3(obb.e2.x, obb.e2.y, obb.e2.z).normalize();
+      
+      const R = new THREE.Matrix4();
+      R.makeBasis(e1, n, e2);
+      const S = new THREE.Matrix4().makeScale(w, d, h);
+      const T = new THREE.Matrix4().makeTranslation(obb.center.x, obb.center.y, obb.center.z);
+      
+      const M = new THREE.Matrix4().multiply(T).multiply(R).multiply(S);
+      obbGroup.matrixAutoUpdate = false;
+      obbGroup.matrix.copy(M);
+      obbGroup.updateMatrixWorld(true);
+    }
+
+    // ======= PiP Cameras & Render Targets =======
+    const pipCam1 = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 200);
+    const pipCam2 = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 200);
+    
+    const renderTarget1 = new THREE.WebGLRenderTarget(CFG.PIP_W, CFG.PIP_H);
+    const renderTarget2 = new THREE.WebGLRenderTarget(CFG.PIP_W, CFG.PIP_H);
+    
+    const pip1Ctx = document.getElementById('pip1Canvas').getContext('2d');
+    const pip2Ctx = document.getElementById('pip2Canvas').getContext('2d');
+    const pip3Ctx = document.getElementById('pip3Canvas').getContext('2d');
+
+    // ======= Physics =======
+    const cfg = new A.btDefaultCollisionConfiguration();
+    const dispatcher = new A.btCollisionDispatcher(cfg);
+    const broadphase = new A.btDbvtBroadphase();
+    const solver = new A.btSequentialImpulseConstraintSolver();
+    const world = new A.btDiscreteDynamicsWorld(dispatcher, broadphase, solver, cfg);
+    world.setGravity(new A.btVector3(0, -9.81, 0));
+
+    // Static ground body
+    const groundShape = new A.btBoxShape(new A.btVector3(CFG.PLANE_SIZE/2, 0.5, CFG.PLANE_SIZE/2));
+    const gTr = new A.btTransform();
+    gTr.setIdentity();
+    gTr.setOrigin(new A.btVector3(0, -0.5, 0));
+    const gMotion = new A.btDefaultMotionState(gTr);
+    const gInfo = new A.btRigidBodyConstructionInfo(0, gMotion, groundShape, new A.btVector3(0, 0, 0));
+    const groundBody = new A.btRigidBody(gInfo);
+    groundBody.setFriction(1.0);
+    world.addRigidBody(groundBody);
+
+    // ======= Dynamic Body =======
+    const loader = new GLTFLoader();
+    const mass = 2;
+    let dynMesh = null, dynBody = null;
+    let shapeType = 'cube10', customBodyURL = null;
+    let friction = 0.8, restitution = 0.1;
+    let speedX = 15, speedZ = 0, gravity = 9.81;
+    let pipEnabled = true;
+    let forceX = 0, forceZ = 0;
+    let contactSamples = [];
+    let geometricMean = { x: 0, y: 0, z: 0 };
+    let lastOBB = null;
+    let bboxAlgorithm = 'ombb';
+    let previousVelocity = new THREE.Vector3(0, 0, 0);
+    let previousAngle = 0;
+    const ANGLE_STABILITY_THRESHOLD = 25 * Math.PI / 180; // 25 degrees
+    const MIN_CONTACTS_FOR_STABLE_BOX = 3;
+
+    function makeConvexTriangleMeshShapeFromGeometry(geom) {
+      const pos = geom.attributes.position.array;
+      const idx = geom.index ? geom.index.array : null;
+      const triMesh = new A.btTriangleMesh(true, true);
+      const addTri = (i0, i1, i2) => {
+        const v0 = new A.btVector3(pos[3*i0], pos[3*i0+1], pos[3*i0+2]);
+        const v1 = new A.btVector3(pos[3*i1], pos[3*i1+1], pos[3*i1+2]);
+        const v2 = new A.btVector3(pos[3*i2], pos[3*i2+1], pos[3*i2+2]);
+        triMesh.addTriangle(v0, v1, v2, true);
+        A.destroy(v0); A.destroy(v1); A.destroy(v2);
+      };
+      if (idx) {
+        for (let i = 0; i < idx.length; i += 3) addTri(idx[i], idx[i+1], idx[i+2]);
+      } else {
+        for (let i = 0; i < pos.length/3; i += 3) addTri(i, i+1, i+2);
+      }
+      try {
+        const shape = new A.btConvexTriangleMeshShape(triMesh, true);
+        shape.setMargin(0.004);
+        return shape;
+      } catch(e) {
+        const shape = new A.btConvexHullShape();
+        for (let i = 0; i < pos.length; i += 3) {
+          const v = new A.btVector3(pos[i], pos[i+1], pos[i+2]);
+          shape.addPoint(v, true);
+          A.destroy(v);
+        }
+        shape.setMargin(0.004);
+        return shape;
+      }
+    }
+
+    function makeCube(size = 2, seg = 10) {
+      const geom = new THREE.BoxGeometry(size, size, size, seg, seg, seg);
+      
+      // Generate new random texture for cube
+      currentCubeTexture = new THREE.CanvasTexture(generateRandomCubeTexture(512));
+      currentCubeTexture.wrapS = THREE.RepeatWrapping;
+      currentCubeTexture.wrapT = THREE.RepeatWrapping;
+      
+      const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({
+        map: currentCubeTexture,
+        color: 0xffffff, 
+        metalness: 0.2, 
+        roughness: 0.5,
+        side: THREE.FrontSide
+      }));
+      scene.add(mesh);
+      const shape = new A.btBoxShape(new A.btVector3(size/2, size/2, size/2));
+      const tr = new A.btTransform();
+      tr.setIdentity();
+      const motion = new A.btDefaultMotionState(tr);
+      const inertia = new A.btVector3(0, 0, 0);
+      shape.calculateLocalInertia(mass, inertia);
+      const info = new A.btRigidBodyConstructionInfo(mass, motion, shape, inertia);
+      const body = new A.btRigidBody(info);
+      body.setFriction(friction);
+      body.setRestitution(restitution);
+      body.setDamping(0.01, 0.01);
+      body.setCcdSweptSphereRadius(size * 0.25);
+      body.setCcdMotionThreshold(0.001);
+      world.addRigidBody(body);
+      return { mesh, body };
+    }
+
+    function makePuck(R = 1.2, r = 0.4, radialSeg = 96, tubularSeg = 192) {
+      const geom = new THREE.TorusGeometry(R, r, radialSeg, tubularSeg);
+      geom.rotateX(Math.PI/2);
+      
+      // Generate texture for puck too
+      const puckTexture = new THREE.CanvasTexture(generateRandomCubeTexture(512));
+      
+      const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({
+        map: puckTexture,
+        color: 0xffffff, 
+        metalness: 0.3, 
+        roughness: 0.4,
+        side: THREE.FrontSide
+      }));
+      scene.add(mesh);
+      const shape = makeConvexTriangleMeshShapeFromGeometry(geom);
+      const tr = new A.btTransform();
+      tr.setIdentity();
+      const motion = new A.btDefaultMotionState(tr);
+      const inertia = new A.btVector3(0, 0, 0);
+      shape.calculateLocalInertia(mass, inertia);
+      const info = new A.btRigidBodyConstructionInfo(mass, motion, shape, inertia);
+      const body = new A.btRigidBody(info);
+      body.setFriction(friction);
+      body.setRestitution(restitution);
+      body.setDamping(0.01, 0.01);
+      body.setCcdSweptSphereRadius(r * 0.8);
+      body.setCcdMotionThreshold(0.005);
+      world.addRigidBody(body);
+      return { mesh, body };
+    }
+
+    async function makeCustomBody(url) {
+      try {
+        const gltf = await new Promise((res, rej) => loader.load(url, res, undefined, rej));
+        let srcMesh = null;
+        gltf.scene.traverse(o => { if (o.isMesh && !srcMesh) srcMesh = o; });
+        if (!srcMesh) throw new Error('No mesh found in GLB');
+        
+        const mesh = srcMesh.clone();
+        const bbox = new THREE.Box3().setFromObject(mesh);
+        const size = bbox.getSize(new THREE.Vector3());
+        const scale = 2.5 / Math.max(size.x, size.y, size.z);
+        mesh.scale.setScalar(scale);
+        
+        if (srcMesh.material) {
+          mesh.material = srcMesh.material.clone();
+          mesh.material.needsUpdate = true;
+          mesh.material.side = THREE.FrontSide;
+          if (mesh.material.metalness !== undefined) mesh.material.metalness = 0.3;
+          if (mesh.material.roughness !== undefined) mesh.material.roughness = 0.5;
+        } else {
+          mesh.material = new THREE.MeshStandardMaterial({ 
+            color: 0xff9900, 
+            metalness: 0.3, 
+            roughness: 0.5,
+            side: THREE.FrontSide
+          });
+        }
+        
+        scene.add(mesh);
+        const shape = makeConvexTriangleMeshShapeFromGeometry(mesh.geometry);
+        const tr = new A.btTransform();
+        tr.setIdentity();
+        const motion = new A.btDefaultMotionState(tr);
+        const inertia = new A.btVector3(0, 0, 0);
+        shape.calculateLocalInertia(mass, inertia);
+        const info = new A.btRigidBodyConstructionInfo(mass, motion, shape, inertia);
+        const body = new A.btRigidBody(info);
+        body.setFriction(friction);
+        body.setRestitution(restitution);
+        body.setDamping(0.01, 0.01);
+        body.setCcdSweptSphereRadius(0.3);
+        body.setCcdMotionThreshold(0.002);
+        world.addRigidBody(body);
+        return { mesh, body };
+      } catch(e) {
+        console.error('Failed to load custom body:', e);
+        return makeCube(2, 10);
+      }
+    }
+
+    function destroyCurrent() {
+      if (dynMesh) scene.remove(dynMesh);
+      if (dynBody) {
+        world.removeRigidBody(dynBody);
+        A.destroy(dynBody);
+      }
+      dynMesh = null;
+      dynBody = null;
+    }
+
+    async function startBody() {
+      destroyCurrent();
+      let made;
+      if (shapeType === 'puck') made = makePuck(1.2, 0.4, 96, 192);
+      else if (shapeType === 'cube10') made = makeCube(2, 10);
+      else if (shapeType === 'cube20') made = makeCube(2, 20);
+      else if (shapeType === 'cube50') made = makeCube(2, 50);
+      else if (shapeType === 'custom' && customBodyURL) made = await makeCustomBody(customBodyURL);
+      else made = makeCube(2, 10);
+      dynMesh = made.mesh;
+      dynBody = made.body;
+      resetBody();
+    }
+
+    function resetBody() {
+      if (!dynMesh || !dynBody) return;
+      const tr = new A.btTransform();
+      tr.setIdentity();
+      const x = -CFG.PLANE_SIZE/2 + 2, y = 4.5, z = 0;
+      tr.setOrigin(new A.btVector3(x, y, z));
+      dynBody.setWorldTransform(tr);
+      dynBody.getMotionState().setWorldTransform(tr);
+      dynBody.setLinearVelocity(new A.btVector3(speedX, 0, speedZ));
+      dynBody.setAngularVelocity(new A.btVector3(0, 0, 0));
+      dynBody.clearForces();
+      dynBody.activate();
+      dynMesh.position.set(x, y, z);
+      dynMesh.quaternion.set(0, 0, 0, 1);
+    }
+
+    // ======= Contact Sampling with Geometric Mean =======
+    let avgContactNormal = new THREE.Vector3(0, 1, 0);
+    let avgContactPoint = new THREE.Vector3(0, 0, 0);
+
+    function getMeshConvexHullOnPlane(mesh, planeY) {
+      if (!mesh || !mesh.geometry) return [];
+      
+      // Project mesh vertices onto the XZ plane at given Y height
+      const pos = mesh.geometry.attributes.position;
+      const matrixWorld = mesh.matrixWorld;
+      const points2D = [];
+      const tempVec = new THREE.Vector3();
+      
+      for (let i = 0; i < pos.count; i++) {
+        tempVec.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+        tempVec.applyMatrix4(matrixWorld);
+        
+        // Only consider vertices near the contact plane (within 0.5 units)
+        if (Math.abs(tempVec.y - planeY) < 0.5) {
+          points2D.push({ x: tempVec.x, z: tempVec.z });
+        }
+      }
+      
+      if (points2D.length < 3) return [];
+      
+      // Compute 2D convex hull using Graham scan
+      const sorted = [...points2D].sort((a, b) => a.x === b.x ? a.z - b.z : a.x - b.x);
+      const cross = (o, a, b) => (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x);
+      
+      const lower = [];
+      for (const p of sorted) {
+        while (lower.length >= 2 && cross(lower[lower.length-2], lower[lower.length-1], p) <= 0) {
+          lower.pop();
+        }
+        lower.push(p);
+      }
+      
+      const upper = [];
+      for (let i = sorted.length - 1; i >= 0; i--) {
+        const p = sorted[i];
+        while (upper.length >= 2 && cross(upper[upper.length-2], upper[upper.length-1], p) <= 0) {
+          upper.pop();
+        }
+        upper.push(p);
+      }
+      
+      return lower.slice(0, -1).concat(upper.slice(0, -1));
+    }
+
+    function augmentContactsWithHull(contacts, mesh, planeY, gm) {
+      let augmented = [...contacts];
+      
+      // Get convex hull of mesh projected onto contact plane
+      const hull = getMeshConvexHullOnPlane(mesh, planeY);
+      
+      if (hull.length >= 3) {
+        // Sample points along hull perimeter
+        const samplesPerEdge = 2;
+        for (let i = 0; i < hull.length; i++) {
+          const p1 = hull[i];
+          const p2 = hull[(i + 1) % hull.length];
+          
+          for (let j = 0; j <= samplesPerEdge; j++) {
+            const t = j / samplesPerEdge;
+            augmented.push({
+              x: p1.x * (1 - t) + p2.x * t,
+              y: planeY,
+              z: p1.z * (1 - t) + p2.z * t
+            });
+          }
+        }
+      }
+      
+      // Also add geometric mean ring for stability
+      const ringRadius = 0.12;
+      const ringCount = 6;
+      for (let i = 0; i < ringCount; i++) {
+        const angle = (Math.PI * 2 * i) / ringCount;
+        augmented.push({
+          x: gm.x + Math.cos(angle) * ringRadius,
+          y: planeY,
+          z: gm.z + Math.sin(angle) * ringRadius
+        });
+      }
+      
+      return augmented;
+    }
+
+    function sampleContacts() {
+      contactSamples.length = 0;
+      const manifolds = dispatcher.getNumManifolds();
+      let count = 0;
+      const nAccum = new THREE.Vector3(0, 0, 0);
+      const pAccum = new THREE.Vector3(0, 0, 0);
+      
+      for (let i = 0; i < manifolds; i++) {
+        const m = dispatcher.getManifoldByIndexInternal(i);
+        const n = m.getNumContacts();
+        for (let j = 0; j < n; j++) {
+          const p = m.getContactPoint(j);
+          const nB = p.get_m_normalWorldOnB && p.get_m_normalWorldOnB();
+          if (nB) {
+            nAccum.x += nB.x();
+            nAccum.y += nB.y();
+            nAccum.z += nB.z();
+          }
+          const pwB = p.get_m_positionWorldOnB && p.get_m_positionWorldOnB();
+          if (pwB) {
+            pAccum.x += pwB.x();
+            pAccum.y += pwB.y();
+            pAccum.z += pwB.z();
+            contactSamples.push({ x: pwB.x(), y: pwB.y(), z: pwB.z() });
+          }
+          count++;
+        }
+      }
+      
+      if (count > 0) {
+        nAccum.multiplyScalar(1/Math.max(1, count));
+        if (nAccum.y < 0) nAccum.multiplyScalar(-1);
+        avgContactNormal.copy(nAccum.lengthSq() > 1e-12 ? nAccum.normalize() : new THREE.Vector3(0, 1, 0));
+        pAccum.multiplyScalar(1/Math.max(1, count));
+        avgContactPoint.copy(pAccum);
+        
+        // Calculate geometric mean (positive domain only)
+        if (contactSamples.length > 0) {
+          let minx = Infinity, miny = Infinity, minz = Infinity;
+          for (const p of contactSamples) {
+            if (p.x < minx) minx = p.x;
+            if (p.y < miny) miny = p.y;
+            if (p.z < minz) minz = p.z;
+          }
+          const shiftx = (minx <= 0) ? (1 - minx) : 0;
+          const shifty = (miny <= 0) ? (1 - miny) : 0;
+          const shiftz = (minz <= 0) ? (1 - minz) : 0;
+          
+          let lx = 0, ly = 0, lz = 0;
+          for (const p of contactSamples) {
+            lx += Math.log(p.x + shiftx);
+            ly += Math.log(p.y + shifty);
+            lz += Math.log(p.z + shiftz);
+          }
+          geometricMean.x = Math.exp(lx / contactSamples.length) - shiftx;
+          geometricMean.y = Math.exp(ly / contactSamples.length) - shifty;
+          geometricMean.z = Math.exp(lz / contactSamples.length) - shiftz;
+          
+          document.getElementById('gmean').textContent = 
+            `(${geometricMean.x.toFixed(3)}, ${geometricMean.z.toFixed(3)})`;
+          
+          // Augment contacts if count is too low - use hull + geometric mean
+          if (contactSamples.length <= MIN_CONTACTS_FOR_STABLE_BOX && dynMesh) {
+            contactSamples = augmentContactsWithHull(
+              contactSamples, 
+              dynMesh, 
+              avgContactPoint.y,
+              geometricMean
+            );
+          }
+        }
+      } else {
+        document.getElementById('gmean').textContent = '—';
+      }
+      
+      document.getElementById('contacts').textContent = String(count);
+      updateContactPoints(contactSamples.slice(0, count)); // Only show real contacts visually
+      updateGeomMeanMarker(count > 0 ? geometricMean : null);
+    }
+
+    // ======= Bounding Box Algorithms =======
+    
+    function rotatePoints2D(pts, theta) {
+      const c = Math.cos(theta), s = Math.sin(theta);
+      return pts.map(p => ({
+        x: c * p.x - s * p.z,
+        z: s * p.x + c * p.z
+      }));
+    }
+
+    function projectBBox(pts, theta) {
+      const rotated = rotatePoints2D(pts, -theta);
+      let minX = Infinity, maxX = -Infinity;
+      let minZ = Infinity, maxZ = -Infinity;
+      for (const p of rotated) {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.z < minZ) minZ = p.z;
+        if (p.z > maxZ) maxZ = p.z;
+      }
+      const w = maxX - minX;
+      const h = maxZ - minZ;
+      const cx = (minX + maxX) / 2;
+      const cz = (minZ + maxZ) / 2;
+      const c = Math.cos(theta), s = Math.sin(theta);
+      return {
+        width: w,
+        height: h,
+        centerX: c * cx - s * cz,
+        centerZ: s * cx + c * cz,
+        area: w * h
+      };
+    }
+
+    function computeAABB(pts) {
+      let minX = Infinity, maxX = -Infinity;
+      let minZ = Infinity, maxZ = -Infinity;
+      for (const p of pts) {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.z < minZ) minZ = p.z;
+        if (p.z > maxZ) maxZ = p.z;
+      }
+      const w = maxX - minX;
+      const h = maxZ - minZ;
+      return {
+        width: Math.max(CFG.MIN_CONTACT_SIZE, w),
+        height: Math.max(CFG.MIN_CONTACT_SIZE, h),
+        centerX: (minX + maxX) / 2,
+        centerZ: (minZ + maxZ) / 2,
+        theta: 0
+      };
+    }
+
+    function computePCAOBB(pts) {
+      if (pts.length < 2) return computeAABB(pts);
+      
+      let mx = 0, mz = 0;
+      for (const p of pts) {
+        mx += p.x;
+        mz += p.z;
+      }
+      mx /= pts.length;
+      mz /= pts.length;
+      
+      let cxx = 0, czz = 0, cxz = 0;
+      for (const p of pts) {
+        const dx = p.x - mx;
+        const dz = p.z - mz;
+        cxx += dx * dx;
+        czz += dz * dz;
+        cxz += dx * dz;
+      }
+      cxx /= pts.length;
+      czz /= pts.length;
+      cxz /= pts.length;
+      
+      const trace = cxx + czz;
+      const det = cxx * czz - cxz * cxz;
+      const lambda1 = trace/2 + Math.sqrt(Math.max(0, trace*trace/4 - det));
+      
+      let vx, vz;
+      if (Math.abs(cxz) > 1e-9) {
+        vx = lambda1 - czz;
+        vz = cxz;
+      } else {
+        vx = 1;
+        vz = 0;
+      }
+      const len = Math.sqrt(vx*vx + vz*vz);
+      if (len > 1e-9) {
+        vx /= len;
+        vz /= len;
+      }
+      
+      const theta = Math.atan2(vz, vx);
+      const bbox = projectBBox(pts, theta);
+      
+      return {
+        width: Math.max(CFG.MIN_CONTACT_SIZE, bbox.width),
+        height: Math.max(CFG.MIN_CONTACT_SIZE, bbox.height),
+        centerX: bbox.centerX,
+        centerZ: bbox.centerZ,
+        theta: theta
+      };
+    }
+
+    function computeOMBB(pts) {
+      if (pts.length < 3) return computeAABB(pts);
+      
+      const sorted = [...pts].sort((a, b) => a.x === b.x ? a.z - b.z : a.x - b.x);
+      const cross = (o, a, b) => (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x);
+      
+      const lower = [];
+      for (const p of sorted) {
+        while (lower.length >= 2 && cross(lower[lower.length-2], lower[lower.length-1], p) <= 0) {
+          lower.pop();
+        }
+        lower.push(p);
+      }
+      
+      const upper = [];
+      for (let i = sorted.length - 1; i >= 0; i--) {
+        const p = sorted[i];
+        while (upper.length >= 2 && cross(upper[upper.length-2], upper[upper.length-1], p) <= 0) {
+          upper.pop();
+        }
+        upper.push(p);
+      }
+      
+      const hull = lower.slice(0, -1).concat(upper.slice(0, -1));
+      if (hull.length < 2) return computeAABB(pts);
+      
+      let bestArea = Infinity;
+      let bestBox = null;
+      
+      for (let i = 0; i < hull.length; i++) {
+        const p1 = hull[i];
+        const p2 = hull[(i + 1) % hull.length];
+        const dx = p2.x - p1.x;
+        const dz = p2.z - p1.z;
+        const theta = Math.atan2(dz, dx);
+        
+        const bbox = projectBBox(hull, theta);
+        if (bbox.area < bestArea) {
+          bestArea = bbox.area;
+          bestBox = {
+            width: bbox.width,
+            height: bbox.height,
+            centerX: bbox.centerX,
+            centerZ: bbox.centerZ,
+            theta: theta
+          };
+        }
+      }
+      
+      if (!bestBox) return computeAABB(pts);
+      
+      return {
+        width: Math.max(CFG.MIN_CONTACT_SIZE, bestBox.width),
+        height: Math.max(CFG.MIN_CONTACT_SIZE, bestBox.height),
+        centerX: bestBox.centerX,
+        centerZ: bestBox.centerZ,
+        theta: bestBox.theta
+      };
+    }
+
+    function computeKDOP(pts, k) {
+      if (pts.length < 2) return computeAABB(pts);
+      
+      let bestArea = Infinity;
+      let bestBox = null;
+      
+      for (let i = 0; i < k; i++) {
+        const theta = Math.PI * i / k;
+        const bbox = projectBBox(pts, theta);
+        
+        if (bbox.area < bestArea) {
+          bestArea = bbox.area;
+          bestBox = {
+            width: bbox.width,
+            height: bbox.height,
+            centerX: bbox.centerX,
+            centerZ: bbox.centerZ,
+            theta: theta
+          };
+        }
+      }
+      
+      if (!bestBox) return computeAABB(pts);
+      
+      return {
+        width: Math.max(CFG.MIN_CONTACT_SIZE, bestBox.width),
+        height: Math.max(CFG.MIN_CONTACT_SIZE, bestBox.height),
+        centerX: bestBox.centerX,
+        centerZ: bestBox.centerZ,
+        theta: bestBox.theta
+      };
+    }
+
+    function computeHybrid(pts, k = 16, quantile = 0.05) {
+      if (pts.length < 2) return computeAABB(pts);
+      
+      let bestTheta = 0;
+      let bestArea = Infinity;
+      
+      for (let i = 0; i < k; i++) {
+        const theta = Math.PI * i / k;
+        const bbox = projectBBox(pts, theta);
+        if (bbox.area < bestArea) {
+          bestArea = bbox.area;
+          bestTheta = theta;
+        }
+      }
+      
+      const rotated = rotatePoints2D(pts, -bestTheta);
+      rotated.sort((a, b) => a.x - b.x);
+      
+      const nPts = rotated.length;
+      const lowIdx = Math.floor(nPts * quantile);
+      const highIdx = Math.ceil(nPts * (1 - quantile)) - 1;
+      
+      const xVals = rotated.map(p => p.x);
+      const zVals = rotated.map(p => p.z);
+      
+      xVals.sort((a, b) => a - b);
+      zVals.sort((a, b) => a - b);
+      
+      const minX = xVals[Math.max(0, lowIdx)];
+      const maxX = xVals[Math.min(nPts - 1, highIdx)];
+      const minZ = zVals[Math.max(0, lowIdx)];
+      const maxZ = zVals[Math.min(nPts - 1, highIdx)];
+      
+      const w = maxX - minX;
+      const h = maxZ - minZ;
+      const cx = (minX + maxX) / 2;
+      const cz = (minZ + maxZ) / 2;
+      
+      const c = Math.cos(bestTheta), s = Math.sin(bestTheta);
+      
+      return {
+        width: Math.max(CFG.MIN_CONTACT_SIZE, w),
+        height: Math.max(CFG.MIN_CONTACT_SIZE, h),
+        centerX: c * cx - s * cz,
+        centerZ: s * cx + c * cz,
+        theta: bestTheta
+      };
+    }
+
+    function computeBoundingBox(contactPts, contactPoint, contactNormal, algorithm) {
+      if (!contactPts || contactPts.length === 0) return null;
+      
+      // Get current velocity
+      let currentVelocity = new THREE.Vector3(0, 0, 0);
+      let velocityMag = 0;
+      if (dynBody) {
+        const lv = dynBody.getLinearVelocity();
+        currentVelocity.set(lv.x(), lv.y(), lv.z());
+        velocityMag = Math.sqrt(lv.x() * lv.x() + lv.z() * lv.z()); // XZ plane magnitude
+        A.destroy(lv);
+      }
+      
+      const pts2D = contactPts.map(p => ({ x: p.x, z: p.z }));
+      let bbox2D;
+      let finalTheta;
+      
+      // If velocity is significant, align box with velocity direction
+      if (velocityMag > 0.5) {
+        // Use velocity direction as box orientation
+        finalTheta = Math.atan2(currentVelocity.z, currentVelocity.x);
+        
+        // Project all points along velocity direction and compute bounds
+        const rotated = rotatePoints2D(pts2D, -finalTheta);
+        let minX = Infinity, maxX = -Infinity;
+        let minZ = Infinity, maxZ = -Infinity;
+        
+        for (const p of rotated) {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+          if (p.z < minZ) minZ = p.z;
+          if (p.z > maxZ) maxZ = p.z;
+        }
+        
+        const w = maxX - minX;
+        const h = maxZ - minZ;
+        const cx = (minX + maxX) / 2;
+        const cz = (minZ + maxZ) / 2;
+        const c = Math.cos(finalTheta), s = Math.sin(finalTheta);
+        
+        bbox2D = {
+          width: Math.max(CFG.MIN_CONTACT_SIZE, w),
+          height: Math.max(CFG.MIN_CONTACT_SIZE, h),
+          centerX: c * cx - s * cz,
+          centerZ: s * cx + c * cz,
+          theta: finalTheta
+        };
+      } else {
+        // Low velocity - use traditional algorithm
+        switch (algorithm) {
+          case 'aabb':
+            bbox2D = computeAABB(pts2D);
+            break;
+          case 'obb':
+            bbox2D = computePCAOBB(pts2D);
+            break;
+          case 'ombb':
+            bbox2D = computeOMBB(pts2D);
+            break;
+          case 'kdop8':
+            bbox2D = computeKDOP(pts2D, 8);
+            break;
+          case 'hybrid':
+            bbox2D = computeHybrid(pts2D, 16, 0.05);
+            break;
+          default:
+            bbox2D = computeOMBB(pts2D);
+        }
+        finalTheta = bbox2D.theta;
+      }
+      
+      // Check velocity consistency for angle smoothing (only when velocity-based)
+      const prevVelocityMag = previousVelocity.length();
+      let velocityConsistent = false;
+      
+      if (velocityMag > 0.5 && prevVelocityMag > 0.5) {
+        const velDot = currentVelocity.dot(previousVelocity) / (velocityMag * prevVelocityMag);
+        velocityConsistent = velDot > 0.8;
+      }
+      
+      // Apply angle stability if velocity is consistent
+      if (lastOBB && velocityConsistent && velocityMag > 0.5) {
+        let angleDiff = Math.abs(finalTheta - previousAngle);
+        while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+        while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+        angleDiff = Math.abs(angleDiff);
+        
+        if (angleDiff > ANGLE_STABILITY_THRESHOLD) {
+          finalTheta = previousAngle;
+          const stableBBox = projectBBox(pts2D, finalTheta);
+          bbox2D.width = stableBBox.width;
+          bbox2D.height = stableBBox.height;
+          bbox2D.centerX = stableBBox.centerX;
+          bbox2D.centerZ = stableBBox.centerZ;
+          bbox2D.theta = finalTheta;
+        }
+      }
+      
+      // Update previous values
+      previousVelocity.copy(currentVelocity);
+      previousAngle = finalTheta;
+      
+      const n = new THREE.Vector3(contactNormal.x, contactNormal.y, contactNormal.z).normalize();
+      const t1 = new THREE.Vector3(Math.cos(finalTheta), 0, Math.sin(finalTheta));
+      const t2 = new THREE.Vector3().crossVectors(n, t1).normalize();
+      
+      return {
+        center: { x: bbox2D.centerX, y: contactPoint.y, z: bbox2D.centerZ },
+        n: { x: n.x, y: n.y, z: n.z },
+        e1: { x: t1.x, y: t1.y, z: t1.z },
+        e2: { x: t2.x, y: t2.y, z: t2.z },
+        width: bbox2D.width,
+        height: bbox2D.height,
+        depth: CFG.OBB_DEPTH,
+        theta: finalTheta
+      };
+    }
+
+    // ======= PiP Camera Updates =======
+    function updatePiPCameras() {
+      if (!pipEnabled || !lastOBB) return;
+      
+      const center = new THREE.Vector3(lastOBB.center.x, lastOBB.center.y, lastOBB.center.z);
+      const n = new THREE.Vector3(lastOBB.n.x, lastOBB.n.y, lastOBB.n.z).normalize();
+      const e1 = new THREE.Vector3(lastOBB.e1.x, lastOBB.e1.y, lastOBB.e1.z).normalize();
+      const e2 = new THREE.Vector3(lastOBB.e2.x, lastOBB.e2.y, lastOBB.e2.z).normalize();
+      const w = Math.max(0.1, lastOBB.width) * paddingWidthScale;
+      const h = Math.max(0.1, lastOBB.height) * paddingHeightScale;
+      const d = CFG.OBB_DEPTH * paddingDepthScale;
+      
+      // Top camera (+n direction)
+      const pos1 = center.clone().addScaledVector(n, d * 0.5);
+      pipCam1.position.copy(pos1);
+      pipCam1.up.copy(e1);
+      pipCam1.left = -w * 0.65;
+      pipCam1.right = w * 0.65;
+      pipCam1.top = h * 0.65;
+      pipCam1.bottom = -h * 0.65;
+      pipCam1.near = 0.1;
+      pipCam1.far = d * 2;
+      pipCam1.lookAt(center);
+      pipCam1.updateProjectionMatrix();
+      
+      // Bottom camera (-n direction)
+      const pos2 = center.clone().addScaledVector(n, -d * 0.5);
+      pipCam2.position.copy(pos2);
+      pipCam2.up.copy(e1);
+      pipCam2.left = -w * 0.65;
+      pipCam2.right = w * 0.65;
+      pipCam2.top = h * 0.65;
+      pipCam2.bottom = -h * 0.65;
+      pipCam2.near = 0.1;
+      pipCam2.far = d * 2;
+      pipCam2.lookAt(center);
+      pipCam2.updateProjectionMatrix();
+    }
+
+    // ======= Ground Stamping Function =======
+    let lastStampTime = 0;
+    const STAMP_INTERVAL = 50; // Stamp every 50ms for smoother trail
+    
+    function stampIntersectionOnGround(currentTime) {
+      if (!enableStamping || !lastOBB || contactSamples.length === 0) return;
+      
+      // Throttle stamping
+      if (currentTime - lastStampTime < STAMP_INTERVAL) return;
+      lastStampTime = currentTime;
+      
+      // Get intersection canvas
+      const intersectionCanvas = document.getElementById('pip3Canvas');
+      if (!intersectionCanvas) return;
+      
+      // Verify intersection canvas has visible content
+      const tempCtx = intersectionCanvas.getContext('2d');
+      const checkData = tempCtx.getImageData(CFG.PIP_W/2 - 50, CFG.PIP_H/2 - 50, 100, 100);
+      let hasContent = false;
+      
+      for (let i = 0; i < checkData.data.length; i += 4) {
+        if (checkData.data[i] > 30 || checkData.data[i+1] > 30 || checkData.data[i+2] > 30) {
+          hasContent = true;
+          break;
+        }
+      }
+      
+      if (!hasContent) return;
+      
+      // Map world coordinates to canvas coordinates (top-down orthographic view)
+      const worldX = lastOBB.center.x;
+      const worldZ = lastOBB.center.z;
+      
+      // Convert to canvas coordinates
+      const canvasX = ((worldX + CFG.PLANE_SIZE / 2) / CFG.PLANE_SIZE) * groundStampCanvas.width;
+      const canvasY = ((worldZ + CFG.PLANE_SIZE / 2) / CFG.PLANE_SIZE) * groundStampCanvas.height;
+      
+      // Calculate stamp size based on bounding box
+      const boxWorldSize = Math.max(lastOBB.width * paddingWidthScale, lastOBB.height * paddingHeightScale);
+      const stampSize = (boxWorldSize / CFG.PLANE_SIZE) * groundStampCanvas.width * 1.3;
+      
+      // Get rotation angle (from top view, Z-forward is 0°, X-right is 90°)
+      const rotationAngle = lastOBB.theta;
+      
+      // Apply stamp
+      groundStampCtx.save();
+      
+      // Translate to stamp position
+      groundStampCtx.translate(canvasX, canvasY);
+      
+      // Rotate to match object orientation (top-down view)
+      groundStampCtx.rotate(rotationAngle);
+      
+      // Set blending
+      groundStampCtx.globalAlpha = stampOpacity;
+      groundStampCtx.globalCompositeOperation = 'source-over';
+      
+      // Draw intersection image as stamp
+      groundStampCtx.drawImage(
+        intersectionCanvas,
+        -stampSize / 2,
+        -stampSize / 2,
+        stampSize,
+        stampSize
+      );
+      
+      groundStampCtx.restore();
+      
+      // Mark texture for update
+      groundStampTexture.needsUpdate = true;
+    }
+    
+    function clearGroundStamps() {
+      groundStampCtx.clearRect(0, 0, groundStampCanvas.width, groundStampCanvas.height);
+      groundStampTexture.needsUpdate = true;
+    }
+    
+    function exportGroundTexture() {
+      // Create composite canvas with base texture and stamps
+      const exportCanvas = document.createElement('canvas');
+      exportCanvas.width = 2048;
+      exportCanvas.height = 2048;
+      const exportCtx = exportCanvas.getContext('2d');
+      
+      // Draw base texture
+      exportCtx.drawImage(groundBaseCanvas, 0, 0, 2048, 2048);
+      
+      // Draw stamps on top
+      exportCtx.drawImage(groundStampCanvas, 0, 0);
+      
+      exportCanvas.toBlob(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'ground_texture_composite.png';
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+    }
+    
+    function regenerateTextures() {
+      // Regenerate ground base texture
+      const newGroundCanvas = generateRandomGroundTexture(2048);
+      groundBaseTexture.image = newGroundCanvas;
+      groundBaseTexture.needsUpdate = true;
+      
+      // Regenerate cube texture if it exists
+      if (dynMesh && shapeType.startsWith('cube')) {
+        const newCubeTexture = new THREE.CanvasTexture(generateRandomCubeTexture(512));
+        newCubeTexture.wrapS = THREE.RepeatWrapping;
+        newCubeTexture.wrapT = THREE.RepeatWrapping;
+        dynMesh.material.map = newCubeTexture;
+        dynMesh.material.needsUpdate = true;
+      }
+    }
+
+    // ======= PiP Rendering =======
+    function renderPiPViews() {
+      if (!pipEnabled || !lastOBB) {
+        pip1Ctx.clearRect(0, 0, CFG.PIP_W, CFG.PIP_H);
+        pip2Ctx.clearRect(0, 0, CFG.PIP_W, CFG.PIP_H);
+        pip3Ctx.clearRect(0, 0, CFG.PIP_W, CFG.PIP_H);
+        return;
+      }
+
+      renderer.setRenderTarget(renderTarget1);
+      renderer.render(scene, pipCam1);
+      
+      const pixels1 = new Uint8Array(CFG.PIP_W * CFG.PIP_H * 4);
+      renderer.readRenderTargetPixels(renderTarget1, 0, 0, CFG.PIP_W, CFG.PIP_H, pixels1);
+      const imageData1 = new ImageData(new Uint8ClampedArray(pixels1), CFG.PIP_W, CFG.PIP_H);
+      pip1Ctx.putImageData(imageData1, 0, 0);
+      
+      renderer.setRenderTarget(renderTarget2);
+      renderer.render(scene, pipCam2);
+      
+      const pixels2 = new Uint8Array(CFG.PIP_W * CFG.PIP_H * 4);
+      renderer.readRenderTargetPixels(renderTarget2, 0, 0, CFG.PIP_W, CFG.PIP_H, pixels2);
+      const imageData2 = new ImageData(new Uint8ClampedArray(pixels2), CFG.PIP_W, CFG.PIP_H);
+      pip2Ctx.putImageData(imageData2, 0, 0);
+      
+      renderer.setRenderTarget(null);
+      
+      
+pip3Ctx.clearRect(0, 0, CFG.PIP_W, CFG.PIP_H);
+pip3Ctx.globalCompositeOperation = 'source-over';
+const intersectionData = new ImageData(CFG.PIP_W, CFG.PIP_H);
+for (let i = 0; i < pixels1.length; i += 4) {
+  const has1 = (pixels1[i] | pixels1[i+1] | pixels1[i+2]) > 10;
+  const has2 = (pixels2[i] | pixels2[i+1] | pixels2[i+2]) > 10;
+  if (has1 && has2) {
+    intersectionData.data[i]   = 255;
+    intersectionData.data[i+1] = 255;
+    intersectionData.data[i+2] = 255;
+    intersectionData.data[i+3] = 255;
+  } else {
+    intersectionData.data[i]   = 0;
+    intersectionData.data[i+1] = 0;
+    intersectionData.data[i+2] = 0;
+    intersectionData.data[i+3] = 0;
+  }
+}
+pip3Ctx.putImageData(intersectionData, 0, 0);
+}
+
+    function saveCanvasAsPNG(canvas, filename) {
+      canvas.toBlob(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+    }
+
+    // ======= Main Loop =======
+    let frame = 0, lastT = performance.now(), lastFrameTime = performance.now();
+    const tmpTr = new A.btTransform();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      frame++;
+      
+      const now = performance.now();
+      if (now - lastT > 500) {
+        const fps = Math.round(1000 / (now - lastT) * frame);
+        document.getElementById('fps').textContent = String(fps);
+        lastT = now;
+        frame = 0;
+      }
+      document.getElementById('frame').textContent = String(frame);
+      
+      
+
+// Apply continuous forces from sliders (X/Z) as impulses: J = F * dt
+const dt = Math.min(1/30, Math.max(1/240, (now - lastFrameTime) / 1000));
+lastFrameTime = now;
+if (dynBody && (forceX !== 0 || forceZ !== 0)) {
+  const impulse = new A.btVector3(forceX * dt, 0, forceZ * dt);
+  dynBody.applyCentralImpulse(impulse);
+  A.destroy(impulse);
+  dynBody.activate();
+}
+
+world.stepSimulation(1/60, 10, 1/120);
+if (dynBody && dynMesh) {
+        dynBody.getMotionState().getWorldTransform(tmpTr);
+        const p = tmpTr.getOrigin();
+        const q = tmpTr.getRotation();
+        dynMesh.position.set(p.x(), p.y(), p.z());
+        dynMesh.quaternion.set(q.x(), q.y(), q.z(), q.w());
+        if (p.x() > CFG.PLANE_SIZE/2 - 2) resetBody();
+      }
+      
+      sampleContacts();
+      
+      if (dynMesh && contactSamples.length > 0) {
+        const obb = computeBoundingBox(contactSamples, avgContactPoint, avgContactNormal, bboxAlgorithm);
+        if (obb) {
+          lastOBB = obb;
+          ensureOBBMeshes();
+          updateOBBMeshes(obb);
+          const angDeg = (obb.theta * 180 / Math.PI).toFixed(2);
+          document.getElementById('obbAng').textContent = angDeg + '°';
+        }
+      } else {
+        lastOBB = null;
+        if (obbGroup) obbGroup.visible = false;
+        document.getElementById('obbAng').textContent = '—';
+      }
+      
+      updatePiPCameras();
+      renderer.render(scene, camera);
+      renderPiPViews();
+      
+      // Stamp intersection on ground
+      stampIntersectionOnGround(now);
+    }
+
+    // ======= UI Hooks =======
+    document.getElementById('loadingScreen').style.display = 'none';
+    document.getElementById('hud').style.display = 'flex';
+    
+    document.getElementById('start').onclick = () => startBody();
+    document.getElementById('reset').onclick = () => resetBody();
+    
+    document.getElementById('shape').onchange = (e) => {
+      shapeType = e.target.value;
+      document.getElementById('customBodyRow').style.display = 
+        (shapeType === 'custom') ? 'flex' : 'none';
+      if (shapeType !== 'custom') startBody();
+    };
+    
+    document.getElementById('bodyFile').onchange = async (e) => {
+      if (e.target.files && e.target.files[0]) {
+        customBodyURL = URL.createObjectURL(e.target.files[0]);
+        await startBody();
+      }
+    };
+    
+    document.getElementById('bboxAlgo').onchange = (e) => {
+      bboxAlgorithm = e.target.value;
+      document.getElementById('bboxType').textContent = e.target.options[e.target.selectedIndex].text;
+    };
+    
+    document.getElementById('paddingWidth').oninput = (e) => {
+      const val = parseInt(e.target.value);
+      paddingWidthScale = val / 100;
+      document.getElementById('paddingWidthVal').textContent = paddingWidthScale.toFixed(2) + 'x';
+    };
+    
+    document.getElementById('paddingHeight').oninput = (e) => {
+      const val = parseInt(e.target.value);
+      paddingHeightScale = val / 100;
+      document.getElementById('paddingHeightVal').textContent = paddingHeightScale.toFixed(2) + 'x';
+    };
+    
+    document.getElementById('paddingDepth').oninput = (e) => {
+      const val = parseInt(e.target.value);
+      paddingDepthScale = val / 100;
+      document.getElementById('paddingDepthVal').textContent = paddingDepthScale.toFixed(2) + 'x';
+    };
+    
+    document.getElementById('speedX').oninput = (e) => {
+      const s = parseInt(e.target.value);
+      document.getElementById('speedXVal').textContent = String(s);
+      speedX = s;
+      if (dynBody) {
+        const v = dynBody.getLinearVelocity();
+        dynBody.setLinearVelocity(new A.btVector3(speedX, v.y(), speedZ));
+        dynBody.activate();
+      }
+    };
+    
+    document.getElementById('speedZ').oninput = (e) => {
+      const s = parseInt(e.target.value);
+      document.getElementById('speedZVal').textContent = String(s);
+      speedZ = s;
+      if (dynBody) {
+        const v = dynBody.getLinearVelocity();
+        dynBody.setLinearVelocity(new A.btVector3(speedX, v.y(), speedZ));
+        dynBody.activate();
+      }
+    };
+    
+    
+
+document.getElementById('forceX').oninput = (e) => {
+  forceX = parseInt(e.target.value);
+  document.getElementById('forceXVal').textContent = String(forceX);
+  if (dynBody) dynBody.activate();
+};
+document.getElementById('forceZ').oninput = (e) => {
+  forceZ = parseInt(e.target.value);
+  document.getElementById('forceZVal').textContent = String(forceZ);
+  if (dynBody) dynBody.activate();
+};
+document.getElementById('gravity').oninput = (e) => {
+      const g = parseInt(e.target.value) / 100;
+      document.getElementById('gravityVal').textContent = g.toFixed(2);
+      gravity = g;
+      world.setGravity(new A.btVector3(0, -gravity, 0));
+    };
+    
+    document.getElementById('friction').oninput = (e) => {
+      friction = parseFloat(e.target.value) || 0;
+      document.getElementById('frictionVal').textContent = friction.toFixed(2);
+      if (dynBody) {
+        dynBody.setFriction(friction);
+        dynBody.activate();
+      }
+    };
+    
+    document.getElementById('restitution').oninput = (e) => {
+      restitution = parseFloat(e.target.value) || 0;
+      document.getElementById('restitutionVal').textContent = restitution.toFixed(2);
+      if (dynBody) {
+        dynBody.setRestitution(restitution);
+        dynBody.activate();
+      }
+    };
+    
+    document.getElementById('pipEnabled').onchange = (e) => {
+      pipEnabled = e.target.checked;
+      document.getElementById('pipContainer').style.display = pipEnabled ? 'flex' : 'none';
+    };
+    
+    document.getElementById('showOBB').onchange = (e) => {
+      showOBB = e.target.checked;
+      if (obbGroup) obbGroup.visible = showOBB;
+    };
+    
+    document.getElementById('showContacts').onchange = (e) => {
+      showContacts = e.target.checked;
+      updateContactPoints(contactSamples);
+    };
+    
+    document.getElementById('showGeomMean').onchange = (e) => {
+      showGeomMean = e.target.checked;
+      updateGeomMeanMarker(contactSamples.length > 0 ? geometricMean : null);
+    };
+    
+    document.getElementById('enableStamping').onchange = (e) => {
+      enableStamping = e.target.checked;
+    };
+    
+    document.getElementById('stampOpacity').oninput = (e) => {
+      const val = parseInt(e.target.value);
+      stampOpacity = val / 100;
+      document.getElementById('stampOpacityVal').textContent = stampOpacity.toFixed(2);
+    };
+    
+    document.getElementById('clearStamps').onclick = () => {
+      clearGroundStamps();
+    };
+    
+    document.getElementById('exportGround').onclick = () => {
+      exportGroundTexture();
+    };
+    
+    document.getElementById('regenerateTextures').onclick = () => {
+      regenerateTextures();
+    };
+    
+    document.getElementById('saveIntersection').onclick = () => 
+      saveCanvasAsPNG(document.getElementById('pip3Canvas'), 'intersection.png');
+    
+    addEventListener('resize', () => {
+      const aspect = innerWidth/innerHeight;
+      camera.aspect = aspect;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+    
+    startBody();
+    animate();
+  </script>
+</body>
+</html>
