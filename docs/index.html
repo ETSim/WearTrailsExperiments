@@ -49,11 +49,10 @@
         <div class="row">
           <span class="label">Algorithm</span>
           <select id="bboxAlgo">
-            <option value="aabb">AABB (Axis-Aligned)</option>
+            <option value="aabb" selected>AABB (Axis-Aligned)</option>
             <option value="obb">OBB (PCA-based)</option>
-            <option value="ombb" selected>OMBB (Rotating Calipers)</option>
+            <option value="ombb">OMBB (Rotating Calipers)</option>
             <option value="kdop8">KDOP-8 → OBB</option>
-            <option value="hybrid">Hybrid (Quantized + Quantile)</option>
           </select>
         </div>
         
@@ -63,6 +62,7 @@
         </div>
       </div>
       
+      
       <!-- Physics & Simulation Section -->
       <div class="section">
         <div class="section-title red collapsible" data-target="physicsSimulationDetails">
@@ -71,14 +71,14 @@
         <div id="physicsSimulationDetails" class="section-details">
         <div class="row">
           <span class="label">Padding Width</span>
-          <input id="paddingWidth" type="range" min="50" max="400" value="120" step="10" />
-          <span id="paddingWidthVal" class="pill">1.20x</span>
+          <input id="paddingWidth" type="range" min="50" max="400" value="100" step="10" />
+          <span id="paddingWidthVal" class="pill">1.00x</span>
         </div>
       
         <div class="row">
           <span class="label">Padding Height</span>
-          <input id="paddingHeight" type="range" min="50" max="400" value="90" step="10" />
-          <span id="paddingHeightVal" class="pill">0.90x</span>
+          <input id="paddingHeight" type="range" min="50" max="400" value="100" step="10" />
+          <span id="paddingHeightVal" class="pill">1.00x</span>
         </div>
         
         <div class="row">
@@ -270,7 +270,6 @@
         </div>
         
         <div class="row">
-          <label><input type="checkbox" id="showCube" checked /> Show Cube</label>
         </div>
         </div>
       </div>
@@ -291,7 +290,7 @@
         </div>
         <div class="row">
           <span class="label">Stamp Interval</span>
-          <input id="stampInterval" type="range" min="10" max="500" value="50" step="10" />
+          <input id="stampInterval" type="range" min="1" max="500" value="50" step="1" />
           <span id="stampIntervalVal" class="pill">50 ms</span>
         </div>
         
@@ -305,7 +304,7 @@
       <!-- Line Stencil -->
       <div class="section">
         <div class="section-title blue collapsible" data-target="lineStencilDetails">
-          <span class="toggle-icon">▼</span> Line Stencil
+          <span class="toggle-icon">▼</span> Line Stencil (Physics-Responsive)
         </div>
         <div id="lineStencilDetails" class="section-details">
         <div class="row">
@@ -318,24 +317,106 @@
           <input id="patternFile" type="file" accept=".png" style="display: none;" />
           <button id="selectPattern" class="save-btn">Select PNG Pattern</button>
         </div>
+
         <div class="row">
-          <span class="label">Line Spacing</span>
+          <p style="font-size: 10px; color: #4ade80; margin: 0;">⚡ Pattern dynamically responds to velocity & normal force</p>
+        </div>
+
+        <div class="row">
+          <span class="label">Base Line Spacing</span>
           <input id="lineSpacing" type="range" min="4" max="20" value="8" step="1" />
           <span id="lineSpacingVal" class="pill">8 px</span>
         </div>
+        <div class="row" style="font-size: 11px; color: #888;">
+          <span class="label">→ Actual Spacing</span>
+          <span id="actualSpacing" class="pill" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa;">8.0 px</span>
+        </div>
+
         <div class="row">
-          <span class="label">Line Width</span>
+          <span class="label">Base Line Width</span>
           <input id="lineWidth" type="range" min="1" max="6" value="2" step="1" />
           <span id="lineWidthVal" class="pill">2 px</span>
         </div>
+        <div class="row" style="font-size: 11px; color: #888;">
+          <span class="label">→ Actual Width</span>
+          <span id="actualWidth" class="pill" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa;">2.0 px</span>
+        </div>
+
         <div class="row">
-          <span class="label">Force Multiplier</span>
-          <input id="lineIntensity" type="range" min="10" max="200" value="100" step="10" />
+          <span class="label">Intensity Scale</span>
+          <input id="lineIntensity" type="range" min="10" max="300" value="100" step="10" />
           <span id="lineIntensityVal" class="pill">100%</span>
         </div>
-        
+        <div class="row" style="font-size: 11px; color: #888;">
+          <span class="label">→ Actual Intensity</span>
+          <span id="actualIntensity" class="pill" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa;">60%</span>
+        </div>
+
+        <div class="row" style="font-size: 11px; color: #888;">
+          <span class="label">Velocity</span>
+          <span id="stencilVelocity" class="pill" style="background: rgba(168, 85, 247, 0.2); color: #a78bfa;">0.0 m/s</span>
+        </div>
+
         <div class="row">
           <button id="clearPiP4Stencil" class="save-btn">Clear Line Stencil</button>
+        </div>
+        </div>
+      </div>
+
+      <!-- Contact Filters -->
+      <div class="section">
+        <div class="section-title red collapsible" data-target="contactFiltersDetails">
+          <span class="toggle-icon">▼</span> Contact Filters (Debug)
+        </div>
+        <div id="contactFiltersDetails" class="section-details">
+        <div class="row">
+          <p style="font-size: 10px; color: #999; margin: 0;">Toggle filters for debugging soft body contact acquisition</p>
+        </div>
+
+        <div class="row">
+          <label><input type="checkbox" id="enableHysteresis" checked /> Hysteresis</label>
+          <label><input type="checkbox" id="enableVelocityGate" checked /> Velocity Gate</label>
+        </div>
+
+        <div class="row">
+          <label><input type="checkbox" id="enableDistanceFilter" checked /> Distance Filter</label>
+          <label><input type="checkbox" id="enableGridDedupe" checked /> Grid Dedupe</label>
+        </div>
+
+        <div class="row">
+          <label><input type="checkbox" id="enableIQROutlier" checked /> IQR Outlier</label>
+          <label><input type="checkbox" id="enableNeighborSupport" checked /> Neighbor Support</label>
+        </div>
+
+        <div class="row">
+          <label><input type="checkbox" id="enableEMASmoothing" checked /> EMA Smoothing</label>
+          <label><input type="checkbox" id="enableHoldLast" checked /> Hold Last</label>
+        </div>
+
+        <div class="row">
+          <label><input type="checkbox" id="enableQualityGates" checked /> Quality Gates</label>
+        </div>
+
+        <div class="row">
+          <button id="filtersAllOn" class="save-btn">All On</button>
+          <button id="filtersAllOff" class="save-btn">All Off</button>
+          <button id="filtersSoftBody" class="save-btn">Soft Body Preset</button>
+        </div>
+        </div>
+      </div>
+
+      <!-- UV Paint -->
+      <div class="section">
+        <div class="section-title purple collapsible" data-target="uvPaintDetails">
+          <span class="toggle-icon">▼</span> UV Paint
+        </div>
+        <div id="uvPaintDetails" class="section-details">
+        <div class="row">
+          <label><input type="checkbox" id="enableUVPaint" /> Enable UV Paint</label>
+        </div>
+        <div class="row">
+          <button id="clearUVPaint" class="save-btn">Clear UV Paint</button>
+          <button id="saveUVPaint" class="save-btn">Save UV Paint</button>
         </div>
         </div>
       </div>
@@ -372,7 +453,7 @@
       <!-- Flow Direction Layer -->
       <div class="section">
         <div class="section-title cyan collapsible" data-target="flowMapDetails">
-          <span class="toggle-icon">▼</span> Flow Map (HSV, V-flipped)
+          <span class="toggle-icon">▼</span> Flow Map (HSV)
         </div>
         <div id="flowMapDetails" class="section-details">
         <div class="row">
@@ -396,45 +477,26 @@
         </div>
       </div>
       
-      <!-- Combined Layer -->
-      <div class="section">
-        <div class="section-title purple collapsible" data-target="combinedDetails">
-          <span class="toggle-icon">▼</span> Combined (Flow + Field)
-        </div>
-        <div id="combinedDetails" class="section-details">
-        <div class="row">
-          <label><input type="checkbox" id="enableCombined" checked /> Enable Combined</label>
-          <label><input type="checkbox" id="showCombined" /> Show Combined</label>
-        </div>
-        <div class="row">
-          <p style="font-size: 10px; color: #999; margin: 0;">Hue=Direction, Sat=Flow, Val=Field</p>
-        </div>
-        <div class="row">
-          <button id="clearCombined" class="save-btn">Clear All</button>
-          <button id="saveCombined" class="save-btn">Save Combined</button>
-        </div>
-        </div>
-      </div>
-      
-      <!-- Export Section -->
+      <!-- Export Controls Section -->
       <div class="section">
         <div class="section-title cyan collapsible" data-target="exportDetails">
           <span class="toggle-icon">▼</span> Export
         </div>
         <div id="exportDetails" class="section-details">
-        <div class="row">
-          <button id="exportPiP1" class="save-btn">Export PiP1 (Top)</button>
-          <button id="exportPiP2" class="save-btn">Export PiP2 (Bottom)</button>
-        </div>
-        <div class="row">
-          <button id="exportPiP3" class="save-btn">Export PiP3 (Intersection)</button>
-          <button id="exportPiP4" class="save-btn">Export PiP4 (Stencil)</button>
-        </div>
-        <div class="row">
-          <button id="saveIntersection" class="save-btn">Save All PiP Views</button>
-        </div>
+          <div class="row">
+            <button id="exportPiP1" class="save-btn">Export Top View</button>
+            <button id="exportPiP2" class="save-btn">Export Bottom View</button>
+          </div>
+          <div class="row">
+            <button id="exportPiP3" class="save-btn">Export Intersection</button>
+            <button id="exportPiP4" class="save-btn">Export Line Stencil</button>
+          </div>
+          <div class="row">
+            <button id="saveIntersection" class="save-btn">Export All Views</button>
+          </div>
         </div>
       </div>
+      
     </div>
 
   </div>
@@ -465,6 +527,6 @@
     "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"
   }}
   </script>
-  <script type="module" src="js/main.js"></script>
+  <script type="module" src="js/main-clean-complete.js"></script>
 </body>
 </html>

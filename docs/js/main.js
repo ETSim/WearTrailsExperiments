@@ -85,6 +85,7 @@ stampTexture.wrapT = THREE.ClampToEdgeWrapping;
 stampTexture.minFilter = THREE.LinearFilter;
 stampTexture.magFilter = THREE.LinearFilter;
 
+
 // ======= Field Intensity Layer (Heat Map) =======
 const fieldCanvas = document.createElement('canvas');
 fieldCanvas.width = 256;
@@ -288,6 +289,7 @@ wallObstacleMesh.receiveShadow = true;
 wallObstacleMesh.visible = false;
 scene.add(wallObstacleMesh);
 
+
 // Physics body for wall obstacle
 const wallObstacleShape = new A.btBoxShape(new A.btVector3(wallObstacleWidth / 2, wallObstacleHeight / 2, wallObstacleDepth / 2));
 const wallObstacleTr = new A.btTransform();
@@ -309,16 +311,16 @@ const bodyManager = new BodyManager(THREE, A, scene, world, mass, CFG, loader, g
 let showOBB = false;
 let showContacts = false;
 let showGeomCenter = false;
-let showCube = true;
 let showWallObstacle = false;
-let paddingWidthScale = 1.2;
-let paddingHeightScale = 0.9;
+let paddingWidthScale = 1.0;
+let paddingHeightScale = 1.0;
 let paddingDepthTopScale = 0.1;
 let paddingDepthBottomScale = 0.1;
 let pipEnabled = true;
 let showPiP4 = true;
 let enableStamping = true;
 let stampLineStencil = true;
+let showStamps = false;
 let useBBoxCenter = false; // Use bounding box center instead of geometric center
 let lineIntensityScale = 1.0; // Intensity scale for line stencil (1.0 = 100%)
 let useCustomPattern = false; // Use custom pattern instead of generated lines
@@ -333,7 +335,7 @@ let gravity = 9.81;
 let timestepHz = 60; // Physics update frequency
 let maxSubsteps = 10; // Maximum substeps per frame
 let fixedTimestep = 120; // Fixed timestep in Hz
-let bboxAlgorithm = 'ombb';
+let bboxAlgorithm = 'aabb';
 let lastOBB = null;
 let contactSamples = [];
 let previousVelocity = new THREE.Vector3(0, 0, 0);
@@ -356,7 +358,7 @@ function worldToFieldPixel(worldX, worldZ) {
   return { x: Math.floor(Math.max(0, Math.min(255, x))), y: Math.floor(Math.max(0, Math.min(255, y))) };
 }
 
-function accumulateField(worldX, worldZ, normalForce = 1.0, radius = 20) {
+function accumulateField(worldX, worldZ, normalForce = 1.0, radius = 10) {
   const center = worldToFieldPixel(worldX, worldZ);
   const radiusSq = radius * radius;
   
@@ -473,7 +475,7 @@ function renderFlow() {
       const dirZ = flowDirZ[i] / mag;
       
       // Direction to hue (0-1) - standard flow map convention (V flipped)
-      const angle = Math.atan2(-dirZ, dirX); // Negative dirZ to flip V axis
+      const angle = Math.atan2(dirZ, dirX); // V axis flipped
       const hue = (angle + Math.PI) / (2 * Math.PI); // 0-1
       
       // Normalize magnitude to 0-1 range
@@ -549,7 +551,7 @@ function renderCombined() {
       const dirZ = flowDirZ[i] / mag;
       
       // Flow direction to hue (V-flipped)
-      const angle = Math.atan2(-dirZ, dirX);
+      const angle = Math.atan2(dirZ, dirX);
       const hue = (angle + Math.PI) / (2 * Math.PI); // 0-1
       
       // Normalize flow magnitude
@@ -888,14 +890,6 @@ if (showGeomCenterEl) {
   };
 }
 
-const showCubeEl = document.getElementById('showCube');
-if (showCubeEl) {
-  showCubeEl.onchange = (e) => {
-    showCube = e.target.checked;
-    const dynMesh = bodyManager.getMesh();
-    if (dynMesh) dynMesh.visible = showCube;
-  };
-}
 
 const showWallObstacleEl = document.getElementById('showWallObstacle');
 if (showWallObstacleEl) {
@@ -912,13 +906,15 @@ if (showWallObstacleEl) {
   };
 }
 
+
 // Stamping is always enabled (UI hidden)
 
 // Stamping controls
 const showStampsEl = document.getElementById('showStamps');
 if (showStampsEl) {
   showStampsEl.onchange = (e) => {
-    stampOverlay.visible = e.target.checked;
+    showStamps = e.target.checked;
+    stampOverlay.visible = showStamps;
   };
 }
 
@@ -1182,8 +1178,13 @@ let frame = 0;
 let lastT = performance.now();
 let lastFrameTime = performance.now();
 let lastPipRender = 0;
+let contactResult = { 
+  count: 0, 
+  geometricCenter: { x: 0, z: 0 }, 
+  avgContactPoint: { x: 0, y: 0, z: 0 },
+  avgContactNormal: { x: 0, y: 1, z: 0 }
+};
 const tmpTr = new A.btTransform();
-const PIP_RENDER_INTERVAL = 33; // Render PiP every 33ms (~30fps)
 
 function animate() {
   requestAnimationFrame(animate);
@@ -1290,7 +1291,7 @@ function animate() {
     if (dynMesh.userData.isSoftBody && dynMesh.userData.updateSoftBodyMesh) {
       // Update soft body mesh vertices using the provided update function
       dynMesh.userData.updateSoftBodyMesh();
-      dynMesh.visible = showCube;
+      dynMesh.visible = true;
       
       // Check bounds using center of mass (average position of all nodes)
       const softBody = dynMesh.userData.physicsBody;
@@ -1326,7 +1327,7 @@ function animate() {
       const q = tmpTr.getRotation();
       dynMesh.position.set(p.x(), p.y(), p.z());
       dynMesh.quaternion.set(q.x(), q.y(), q.z(), q.w());
-      dynMesh.visible = showCube;
+      dynMesh.visible = true;
       
       // Reset if out of bounds (check X, Y, Z axes)
       if (Math.abs(p.x()) > RESET_BOUNDARY || 
@@ -1339,13 +1340,18 @@ function animate() {
   }
 
   // Sample contacts (pass soft body ground threshold)
-  const contactResult = sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STABLE_BOX, softGroundThreshold);
-  contactSamples = contactResult.contactSamples;
-  const count = contactResult.count;
+  const newContactResult = sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STABLE_BOX, softGroundThreshold);
+  contactSamples = newContactResult.contactSamples;
+  contactResult.count = newContactResult.count;
+  contactResult.geometricCenter = newContactResult.geometricCenter;
+  contactResult.avgContactPoint = newContactResult.avgContactPoint;
+  contactResult.avgContactNormal = newContactResult.avgContactNormal;
   
   // Update stats
-  document.getElementById('contacts').textContent = String(count);
-  if (count > 0) {
+  // Display filtered count for more accurate representation
+  const statsDisplayCount = contactResult.filteredCount || 0;
+  document.getElementById('contacts').textContent = String(statsDisplayCount);
+  if (statsDisplayCount > 0) {
     document.getElementById('gcenter').textContent =
       `(${contactResult.geometricCenter.x.toFixed(3)}, ${contactResult.geometricCenter.z.toFixed(3)})`;
   } else {
@@ -1411,8 +1417,10 @@ function animate() {
   }
 
   // Update visualization
-  updateContactPoints(contactPointsGroup, contactSamples.slice(0, count), showContacts, CFG, THREE);
-  updateGeomMeanMarker(geomMeanMarker, count > 0 ? contactResult.geometricCenter : null, showGeomCenter);
+  // Use all contact samples (already filtered) instead of slicing by raw count
+  updateContactPoints(contactPointsGroup, contactSamples, showContacts, CFG, THREE);
+  const displayCount = contactResult.filteredCount || contactResult.count || 0;
+  updateGeomMeanMarker(geomMeanMarker, displayCount > 0 ? contactResult.geometricCenter : null, showGeomCenter);
 
   // Compute bounding box
   if (dynMesh && contactSamples.length > 0) {
@@ -1449,9 +1457,7 @@ function animate() {
   // Render main scene
   renderer.render(scene, camera);
 
-  // Render PiP views (throttled to 30fps)
-  if (now - lastPipRender >= PIP_RENDER_INTERVAL) {
-    lastPipRender = now;
+  // Render PiP views
     
     // Calculate rotation angle from velocity for PiP camera orientation
     let cameraRotation = null;
@@ -1688,6 +1694,7 @@ function animate() {
           stampCtx.restore();
           stampTexture.needsUpdate = true;
           
+          
           // Accumulate field intensity with normal force
           if (enableField) {
             // Calculate normal force: F = mass × gravity (+ vertical acceleration component)
@@ -1715,7 +1722,7 @@ function animate() {
               normalForceEl.textContent = normalForce.toFixed(1) + ' N';
             }
             
-            accumulateField(stampWorldX, stampWorldZ, normalForce, 20);
+            accumulateField(stampWorldX, stampWorldZ, normalForce, 10);
             renderField();
           }
           
@@ -1732,7 +1739,6 @@ function animate() {
         } // End hasContent
       } // End intersectionCanvas
     } // End enableStamping
-  } // End PIP_RENDER_INTERVAL
 }
 
 // Collapsible sections functionality
@@ -1748,6 +1754,7 @@ function initCollapsibleSections() {
   const defaultClosedSections = [
     'statsDetails',
     'simulationControlsDetails',
+    'wallStampingDetails',
     'physicsSimulationDetails',
     'bodyConfigDetails',
     'visualizationDetails',

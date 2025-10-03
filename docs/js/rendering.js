@@ -94,16 +94,16 @@ function updatePiPCameras(pipCam1, pipCam2, lastOBB, paddingWidthScale, paddingH
   const h = Math.max(0.1, lastOBB.height) * paddingHeightScale;
   const d = CFG.OBB_DEPTH * paddingDepthScale;
   
-  // Top camera (+n direction)
-  const pos1 = center.clone().addScaledVector(n, d * 0.5);
+  // Top camera (+n direction) - positioned at the back plane
+  const pos1 = center.clone().addScaledVector(n, d * 2.0);
   pipCam1.position.copy(pos1);
   pipCam1.up.copy(e1);
-  pipCam1.left = -w * 0.65;
-  pipCam1.right = w * 0.65;
-  pipCam1.top = h * 0.65;
-  pipCam1.bottom = -h * 0.65;
-  pipCam1.near = 0.1;
-  pipCam1.far = d * 2;
+  pipCam1.left = -w * 1.0;
+  pipCam1.right = w * 1.0;
+  pipCam1.top = h * 1.0;
+  pipCam1.bottom = -h * 1.0;
+  pipCam1.near = d * 1.5;
+  pipCam1.far = d;
   pipCam1.lookAt(center);
   pipCam1.updateProjectionMatrix();
   
@@ -111,28 +111,13 @@ function updatePiPCameras(pipCam1, pipCam2, lastOBB, paddingWidthScale, paddingH
   const pos2 = center.clone().addScaledVector(n, -d * 0.5);
   pipCam2.position.copy(pos2);
   pipCam2.up.copy(e1);
-  pipCam2.left = -w * 0.65;
-  pipCam2.right = w * 0.65;
-  pipCam2.top = h * 0.65;
-  pipCam2.bottom = -h * 0.65;
+  pipCam2.left = -w * 1.0;
+  pipCam2.right = w * 1.0;
+  pipCam2.top = h * 1.0;
+  pipCam2.bottom = -h * 1.0;
   pipCam2.near = 0.1;
-  pipCam2.far = d * 2;
+  pipCam2.far = d;
   pipCam2.lookAt(center);
   pipCam2.updateProjectionMatrix();
 }
 
-export function regenerateTextures(groundBaseTexture, generateRandomGroundTexture, dynMesh, shapeType, generateRandomCubeTexture, THREE) {
-  // Regenerate ground base texture
-  const newGroundCanvas = generateRandomGroundTexture(2048);
-  groundBaseTexture.image = newGroundCanvas;
-  groundBaseTexture.needsUpdate = true;
-  
-  // Regenerate cube texture if it exists
-  if (dynMesh && shapeType.startsWith('cube')) {
-    const newCubeTexture = new THREE.CanvasTexture(generateRandomCubeTexture(512));
-    newCubeTexture.wrapS = THREE.RepeatWrapping;
-    newCubeTexture.wrapT = THREE.RepeatWrapping;
-    dynMesh.material.map = newCubeTexture;
-    dynMesh.material.needsUpdate = true;
-  }
-}
