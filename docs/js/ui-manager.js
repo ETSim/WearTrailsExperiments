@@ -14,7 +14,6 @@ export class UIManager {
     this.setupStampingControls();
     this.setupPiPControls();
     this.setupContactFilterControls();
-    this.setupExportControls();
     // Wall stamping controls removed - functionality eliminated
     // this.setupWallStampingControls();
   }
@@ -245,83 +244,6 @@ export class UIManager {
       };
     }
     
-    const clearPiP4StencilEl = document.getElementById('clearPiP4Stencil');
-    if (clearPiP4StencilEl) {
-      clearPiP4StencilEl.onclick = () => {
-        if (window.pipManager && window.pipManager.pip4) {
-          window.pipManager.pip4.clearStencil();
-        }
-      };
-    }
-    
-    // Line stencil controls
-    const lineSpacingEl = document.getElementById('lineSpacing');
-    if (lineSpacingEl) {
-      lineSpacingEl.oninput = (e) => {
-        const spacing = parseInt(e.target.value);
-        document.getElementById('lineSpacingVal').textContent = spacing + ' px';
-        if (window.pipManager && window.pipManager.pip4) {
-          window.pipManager.pip4.setLineSpacing(spacing);
-        }
-      };
-    }
-    
-    const lineWidthEl = document.getElementById('lineWidth');
-    if (lineWidthEl) {
-      lineWidthEl.oninput = (e) => {
-        const width = parseInt(e.target.value);
-        document.getElementById('lineWidthVal').textContent = width + ' px';
-        if (window.pipManager && window.pipManager.pip4) {
-          window.pipManager.pip4.setLineWidth(width);
-        }
-      };
-    }
-    
-    const lineIntensityEl = document.getElementById('lineIntensity');
-    if (lineIntensityEl) {
-      lineIntensityEl.oninput = (e) => {
-        const intensity = parseInt(e.target.value);
-        window.state.lineIntensityScale = intensity / 100;
-        document.getElementById('lineIntensityVal').textContent = intensity + '%';
-      };
-    }
-    
-    const useCustomPatternEl = document.getElementById('useCustomPattern');
-    if (useCustomPatternEl) {
-      useCustomPatternEl.onchange = (e) => {
-        window.state.useCustomPattern = e.target.checked;
-        if (window.pipManager && window.pipManager.pip4) {
-          window.pipManager.pip4.setUseCustomPattern(window.state.useCustomPattern);
-        }
-      };
-    }
-
-    const selectPatternEl = document.getElementById('selectPattern');
-    if (selectPatternEl) {
-      selectPatternEl.onclick = () => {
-        document.getElementById('patternFile').click();
-      };
-    }
-
-    const patternFileEl = document.getElementById('patternFile');
-    if (patternFileEl) {
-      patternFileEl.onchange = async (e) => {
-        if (e.target.files && e.target.files[0]) {
-          try {
-            if (window.pipManager && window.pipManager.pip4) {
-              await window.pipManager.pip4.loadCustomPattern(e.target.files[0]);
-              window.state.useCustomPattern = true;
-              document.getElementById('useCustomPattern').checked = true;
-              window.pipManager.pip4.setUseCustomPattern(true);
-              console.log('Custom pattern loaded successfully');
-            }
-          } catch (error) {
-            console.error('Failed to load custom pattern:', error);
-            alert('Failed to load custom pattern. Please make sure it\'s a valid PNG file.');
-          }
-        }
-      };
-    }
     
     const stampIntervalEl = document.getElementById('stampInterval');
     if (stampIntervalEl) {
@@ -344,6 +266,13 @@ export class UIManager {
         window.state.stampLineStencil = e.target.checked;
       };
     }
+
+    const enableSyntheticEl = document.getElementById('enableSynthetic');
+    if (enableSyntheticEl) {
+      enableSyntheticEl.onchange = (e) => {
+        window.state.enableSynthetic = e.target.checked;
+      };
+    }
   }
 
   setupPiPControls() {
@@ -355,20 +284,6 @@ export class UIManager {
     }
   }
   
-  setupExportControls() {
-    // Check if export elements exist before adding event listeners
-    const exportPiP1El = document.getElementById('exportPiP1');
-    const exportPiP2El = document.getElementById('exportPiP2');
-    const exportPiP3El = document.getElementById('exportPiP3');
-    const exportPiP4El = document.getElementById('exportPiP4');
-    const saveIntersectionEl = document.getElementById('saveIntersection');
-    
-    if (exportPiP1El) exportPiP1El.addEventListener('click', this.exportPiP1);
-    if (exportPiP2El) exportPiP2El.addEventListener('click', this.exportPiP2);
-    if (exportPiP3El) exportPiP3El.addEventListener('click', this.exportPiP3);
-    if (exportPiP4El) exportPiP4El.addEventListener('click', this.exportPiP4);
-    if (saveIntersectionEl) saveIntersectionEl.addEventListener('click', this.exportAllPiPViews);
-  }
   
   setupWallStampingControls() {
     const enableWallStampingEl = document.getElementById('enableWallStamping');
@@ -456,37 +371,6 @@ export class UIManager {
     });
   }
   
-  // Export functions
-  exportPiP1() {
-    if (window.pipManager && window.pipManager.pip1) {
-      this.saveCanvasAsPNG(window.pipManager.pip1.canvas, 'pip1_top_view.png');
-    }
-  }
-  
-  exportPiP2() {
-    if (window.pipManager && window.pipManager.pip2) {
-      this.saveCanvasAsPNG(window.pipManager.pip2.canvas, 'pip2_bottom_view.png');
-    }
-  }
-  
-  exportPiP3() {
-    if (window.pipManager && window.pipManager.pip3) {
-      this.saveCanvasAsPNG(window.pipManager.pip3.canvas, 'pip3_intersection.png');
-    }
-  }
-  
-  exportPiP4() {
-    if (window.pipManager && window.pipManager.pip4) {
-      this.saveCanvasAsPNG(window.pipManager.pip4.canvas, 'pip4_line_stencil.png');
-    }
-  }
-  
-  exportAllPiPViews() {
-    this.exportPiP1();
-    this.exportPiP2();
-    this.exportPiP3();
-    this.exportPiP4();
-  }
   
   saveCanvasAsPNG(canvas, filename) {
     const link = document.createElement('a');

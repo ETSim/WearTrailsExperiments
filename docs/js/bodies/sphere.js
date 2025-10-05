@@ -37,7 +37,7 @@ export function makeSphere(THREE, A, scene, mass, friction, restitution, world, 
   try {
     body.setRollingFriction(0.05); // Small rolling resistance for realistic rolling
   } catch (e) {
-    console.log('Rolling friction not supported in this Ammo.js build');
+    // Rolling friction not supported in this Ammo.js build
   }
   
   // Restitution (bounciness)

@@ -5,7 +5,7 @@ export class PiP2 {
     this.pipRenderer = pipRenderer;
     this.camera = pipRenderer.createOrthographicCamera();
     this.renderTarget = pipRenderer.createRenderTarget();
-    this.canvasCtx = document.getElementById('pip2Canvas').getContext('2d');
+    this.canvasCtx = document.getElementById('pip2Canvas').getContext('2d', { willReadFrequently: true });
   }
   
   update(lastOBB, paddingWidthScale, paddingHeightScale, paddingDepthBottomScale, rotationAngle = null) {

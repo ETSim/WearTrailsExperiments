@@ -29,7 +29,6 @@ export function makeCubeSoft(
   const tX = 0, tY = 0, tZ = 0; // Translation offset
 
   if (numPointsX < 2 || numPointsY < 2 || numPointsZ < 2) {
-    console.warn('Soft body requires at least 2 points per dimension');
     return;
   }
 
@@ -286,7 +285,6 @@ export function makeCubeSoft(
   try {
     A.castObject(volumeSoftBody, A.btCollisionObject).getCollisionShape().setMargin(margin);
   } catch (e) {
-    console.warn('Could not set soft body margin:', e);
   }
 
   // Set restitution (bounciness)
@@ -305,7 +303,6 @@ export function makeCubeSoft(
     const ccdThreshold = 0.001;
     A.castObject(volumeSoftBody, A.btCollisionObject).setCcdMotionThreshold(ccdThreshold);
   } catch (e) {
-    console.warn('Could not set CCD for soft body:', e);
   }
 
   // Add to physics world

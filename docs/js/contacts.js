@@ -92,88 +92,162 @@ export class ContactState {
   }
 }
 
-export function getMeshConvexHullOnPlane(mesh, planeY, THREE) {
-  if (!mesh || !mesh.geometry) return [];
-  
+export function getMeshKDOP8OnPlane(mesh, planeY, THREE, tolerance = 0.15) {
+  if (!mesh || !mesh.geometry) return null;
+
   // Project mesh vertices onto the XZ plane at given Y height
   const pos = mesh.geometry.attributes.position;
   const matrixWorld = mesh.matrixWorld;
   const points2D = [];
   const tempVec = new THREE.Vector3();
-  
+
   for (let i = 0; i < pos.count; i++) {
     tempVec.set(pos.getX(i), pos.getY(i), pos.getZ(i));
     tempVec.applyMatrix4(matrixWorld);
-    
-    // Only consider vertices near the contact plane (within 0.5 units)
-    if (Math.abs(tempVec.y - planeY) < 0.5) {
+
+    // Only consider vertices very close to the contact plane
+    if (Math.abs(tempVec.y - planeY) < tolerance) {
       points2D.push({ x: tempVec.x, z: tempVec.z });
     }
   }
-  
-  if (points2D.length < 3) return [];
-  
-  // Compute 2D convex hull using Graham scan
-  const sorted = [...points2D].sort((a, b) => a.x === b.x ? a.z - b.z : a.x - b.x);
-  const cross = (o, a, b) => (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x);
-  
-  const lower = [];
-  for (const p of sorted) {
-    while (lower.length >= 2 && cross(lower[lower.length-2], lower[lower.length-1], p) <= 0) {
-      lower.pop();
+
+  if (points2D.length < 3) return null;
+
+  // Remove duplicate points
+  const uniquePoints = [];
+  const seen = new Set();
+  const gridSize = 0.01; // 1cm grid for deduplication
+
+  for (const pt of points2D) {
+    const gridX = Math.round(pt.x / gridSize);
+    const gridZ = Math.round(pt.z / gridSize);
+    const key = `${gridX},${gridZ}`;
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniquePoints.push(pt);
     }
-    lower.push(p);
   }
-  
-  const upper = [];
-  for (let i = sorted.length - 1; i >= 0; i--) {
-    const p = sorted[i];
-    while (upper.length >= 2 && cross(upper[upper.length-2], upper[upper.length-1], p) <= 0) {
-      upper.pop();
+
+  if (uniquePoints.length < 3) return null;
+
+  // KDOP-8: Test 8 orientations and find minimum area bounding box
+  let bestArea = Infinity;
+  let bestBox = null;
+
+  for (let i = 0; i < 8; i++) {
+    const theta = Math.PI * i / 8;
+    const cosT = Math.cos(theta);
+    const sinT = Math.sin(theta);
+
+    // Rotate points and find AABB in rotated space
+    let minU = Infinity, maxU = -Infinity;
+    let minV = Infinity, maxV = -Infinity;
+
+    for (const pt of uniquePoints) {
+      const u = pt.x * cosT + pt.z * sinT;
+      const v = -pt.x * sinT + pt.z * cosT;
+      minU = Math.min(minU, u);
+      maxU = Math.max(maxU, u);
+      minV = Math.min(minV, v);
+      maxV = Math.max(maxV, v);
     }
-    upper.push(p);
+
+    const width = maxU - minU;
+    const height = maxV - minV;
+    const area = width * height;
+
+    if (area < bestArea) {
+      bestArea = area;
+      bestBox = {
+        theta: theta,
+        centerU: (minU + maxU) / 2,
+        centerV: (minV + maxV) / 2,
+        halfWidth: width / 2,
+        halfHeight: height / 2
+      };
+    }
   }
-  
-  return lower.slice(0, -1).concat(upper.slice(0, -1));
+
+  if (!bestBox) return null;
+
+  // Return the 4 corners of the best bounding box
+  const theta = bestBox.theta;
+  const cosT = Math.cos(theta);
+  const sinT = Math.sin(theta);
+  const cu = bestBox.centerU;
+  const cv = bestBox.centerV;
+  const hw = bestBox.halfWidth;
+  const hh = bestBox.halfHeight;
+
+  // Four corners in rotated space
+  const corners = [
+    { u: cu - hw, v: cv - hh },
+    { u: cu + hw, v: cv - hh },
+    { u: cu + hw, v: cv + hh },
+    { u: cu - hw, v: cv + hh }
+  ];
+
+  // Transform back to world space
+  return corners.map(c => ({
+    x: c.u * cosT - c.v * sinT,
+    z: c.u * sinT + c.v * cosT
+  }));
 }
 
-export function augmentContactsWithHull(contacts, mesh, planeY, gc, THREE) {
-  let augmented = [...contacts];
-  
-  // Get convex hull of mesh projected onto contact plane
-  const hull = getMeshConvexHullOnPlane(mesh, planeY, THREE);
-  
-  if (hull.length >= 3) {
-    // Sample points along hull perimeter
-    const samplesPerEdge = 2;
-    for (let i = 0; i < hull.length; i++) {
-      const p1 = hull[i];
-      const p2 = hull[(i + 1) % hull.length];
-      
-      for (let j = 0; j <= samplesPerEdge; j++) {
-        const t = j / samplesPerEdge;
-        augmented.push({
-          x: p1.x * (1 - t) + p2.x * t,
-          y: planeY,
-          z: p1.z * (1 - t) + p2.z * t
-        });
-      }
+export function augmentContactsWithKDOP8(contacts, mesh, planeY, gc, THREE) {
+  // ONLY augment if there are actual contacts to work with
+  if (contacts.length === 0) {
+    return [];
+  }
+
+  // Copy existing contacts and mark as real (not synthetic)
+  let augmented = contacts.map(pt => ({
+    x: pt.x,
+    y: pt.y,
+    z: pt.z,
+    isSynthetic: false
+  }));
+
+  // Calculate contact Y-plane for KDOP projection
+  const contactYs = contacts.map(c => c.y);
+  const avgY = contactYs.reduce((a, b) => a + b, 0) / contactYs.length;
+
+  const tolerance = 0.10; // 10cm tolerance for mesh projection
+
+  // Get KDOP-8 bounding box corners (4 points, much simpler than convex hull)
+  const corners = getMeshKDOP8OnPlane(mesh, avgY, THREE, tolerance);
+
+  if (corners && corners.length === 4) {
+    // Add all 4 corners as synthetic points
+    for (const corner of corners) {
+      augmented.push({
+        x: corner.x,
+        y: avgY,
+        z: corner.z,
+        isSynthetic: true
+      });
     }
   }
-  
-  // Also add geometric center ring for stability
-  const ringRadius = 0.12;
-  const ringCount = 6;
-  for (let i = 0; i < ringCount; i++) {
-    const angle = (Math.PI * 2 * i) / ringCount;
-    augmented.push({
-      x: gc.x + Math.cos(angle) * ringRadius,
-      y: planeY,
-      z: gc.z + Math.sin(angle) * ringRadius
-    });
-  }
-  
+
   return augmented;
+}
+
+// ===== Utility Functions for Contact Separation =====
+export function getRealContacts(contactSamples) {
+  return contactSamples.filter(pt => !pt.isSynthetic);
+}
+
+export function getSyntheticContacts(contactSamples) {
+  return contactSamples.filter(pt => pt.isSynthetic);
+}
+
+export function separateContacts(contactSamples) {
+  return {
+    real: getRealContacts(contactSamples),
+    synthetic: getSyntheticContacts(contactSamples),
+    all: contactSamples
+  };
 }
 
 export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STABLE_BOX, softGroundThreshold = 0.15, params = null, state = null) {
@@ -205,8 +279,6 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
     const manifolds = dispatcher.getNumManifolds();
     const maxManifolds = Math.min(manifolds, params.maxManifolds);
 
-    console.log(`[Soft Body] Checking ${manifolds} total manifolds (max ${maxManifolds})`);
-
     for (let i = 0; i < maxManifolds; i++) {
       const m = dispatcher.getManifoldByIndexInternal(i);
       const body0 = m.getBody0();
@@ -217,7 +289,6 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
 
       if (involvesOurSoftBody) {
         const numContacts = m.getNumContacts();
-        console.log(`[Soft Body] Manifold ${i} has ${numContacts} contacts with our soft body`);
 
         for (let j = 0; j < numContacts && candidates.length < params.N_target; j++) {
           const p = m.getContactPoint(j);
@@ -246,21 +317,15 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
               rawCount++;
               manifoldContactsFound++;
             }
-          } else {
-            console.log(`[Soft Body] Rejected contact due to distance: ${distance.toFixed(4)} > ${params.d_max}`);
           }
         }
       }
     }
 
-    console.log(`[Soft Body] Found ${manifoldContactsFound} contacts from manifolds`);
-
     // SECOND: Also check node signed distances for additional contact points
     const nodes = softBody.get_m_nodes();
     const nodeCount = nodes.size();
     let nodeContactsFound = 0;
-
-    console.log(`[Soft Body] Checking ${nodeCount} nodes with signed distance threshold ${params.d_enter.toFixed(4)}`);
 
     // Initialize prevSD array if first run
     if (!state.prevSD) state.prevSD = new Array(nodeCount).fill(1e9);
@@ -320,9 +385,6 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
       // Update state
       state.prevSD[i] = sd;
     }
-
-    console.log(`[Soft Body] Found ${nodeContactsFound} contacts from signed distance`);
-    console.log(`[Soft Body] Total raw candidates: ${candidates.length}`);
   } else {
     // RIGID BODY PATH: Manifold scanning with distance filter
     const manifolds = dispatcher.getNumManifolds();
@@ -367,9 +429,6 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
   let filtered = candidates;
   const beforeFiltering = filtered.length;
 
-  if (isSoftBody) {
-    console.log(`[Soft Body] Before filtering: ${beforeFiltering} candidates`);
-  }
 
   // Filter 1: XZ Grid Deduplication (optional)
   if (params.enableGridDedupe && filtered.length > 0) {
@@ -387,10 +446,6 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
         dedup.push(pt);
       }
     }
-
-    if (isSoftBody) {
-      console.log(`[Soft Body] Grid dedupe: ${filtered.length} → ${dedup.length} (removed ${filtered.length - dedup.length})`);
-    }
     filtered = dedup;
   }
 
@@ -405,10 +460,6 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
     const yMax = q75 + 1.5 * iqr;
 
     filtered = filtered.filter(p => p.y >= yMin && p.y <= yMax);
-
-    if (isSoftBody) {
-      console.log(`[Soft Body] IQR outlier rejection: ${beforeIQR} → ${filtered.length} (removed ${beforeIQR - filtered.length})`);
-    }
   }
 
   // Filter 3: Neighbor Support (only when explicitly enabled for soft bodies)
@@ -432,16 +483,10 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
 
     // Only apply filter if we still have enough contacts after filtering
     if (kept.length >= params.k) {
-      if (isSoftBody) {
-        console.log(`[Soft Body] Neighbor support: ${beforeNeighbor} → ${kept.length} (removed ${beforeNeighbor - kept.length})`);
-      }
       filtered = kept;
     }
   }
 
-  if (isSoftBody) {
-    console.log(`[Soft Body] After all filtering: ${filtered.length} contacts`);
-  }
 
   // ===== PHASE 3: CENTROID & NORMAL =====
   let avgContactNormal = new THREE.Vector3(0, 1, 0);
@@ -530,24 +575,55 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
   }
 
   // ===== PHASE 5: AUGMENTATION (if still sparse) =====
-  let finalContacts = filtered;
-  if (filtered.length <= MIN_CONTACTS_FOR_STABLE_BOX && dynMesh && geometricCenter) {
-    const augmented = augmentContactsWithHull(
+  let finalContacts;
+  let syntheticCount = 0;
+  let hullVertexCount = 0;
+
+  // Check if synthetic augmentation is enabled globally (check both state object and global variable)
+  const enableSynthetic = (typeof window !== 'undefined') ?
+    (window.state?.enableSynthetic !== false && window.enableSynthetic !== false) : true;
+
+  // Only augment if: 1) synthetic enabled, 2) contacts exist, 3) they're sparse, 4) we have mesh and center
+  if (enableSynthetic &&
+      filtered.length > 0 &&
+      filtered.length <= MIN_CONTACTS_FOR_STABLE_BOX &&
+      dynMesh &&
+      geometricCenter) {
+
+    // Augment with synthetic KDOP-8 corner points (4 points max)
+    const augmented = augmentContactsWithKDOP8(
       filtered,
       dynMesh,
       avgContactPoint.y,
       geometricCenter,
       THREE
     );
+
     finalContacts = augmented;
+    syntheticCount = augmented.filter(pt => pt.isSynthetic).length;
+  } else if (filtered.length > 0) {
+    // No augmentation needed or disabled - mark all as real contacts
+    finalContacts = filtered.map(pt => ({
+      x: pt.x,
+      y: pt.y,
+      z: pt.z,
+      isSynthetic: false
+    }));
+  } else {
+    // No contacts at all - return empty array
+    finalContacts = [];
   }
 
   // ===== RETURN RESULTS =====
+  const realContactCount = finalContacts.filter(pt => !pt.isSynthetic).length;
+
   return {
     contactSamples: finalContacts,
     count: rawCount,
     filteredCount: filtered.length,
     rawCount: candidates.length,
+    realContactCount: realContactCount,
+    syntheticCount: syntheticCount,
     avgContactNormal,
     avgContactPoint,
     geometricCenter: geometricCenter || { x: 0, y: 0, z: 0 },
@@ -559,8 +635,12 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
       candidateCount: candidates.length,
       filteredCount: filtered.length,
       finalCount: finalContacts.length,
+      realContactCount: realContactCount,
+      syntheticCount: syntheticCount,
+      hullVertexCount: hullVertexCount,
       usedManifolds: isSoftBody || rawCount > 0,
-      contactMethod: isSoftBody ? 'hybrid (manifold + signed distance)' : 'manifold only'
+      contactMethod: isSoftBody ? 'hybrid (manifold + signed distance)' : 'manifold only',
+      augmentationUsed: syntheticCount > 0 ? 'hull-based' : 'none'
     }
   };
 }

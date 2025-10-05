@@ -188,8 +188,11 @@ export class AnimationManager {
       this.contactState
     );
 
-    window.contactSamples = newContactResult.contactSamples;
+    window.state.contactSamples = newContactResult.contactSamples;
     this.contactResult.count = newContactResult.count;
+    this.contactResult.filteredCount = newContactResult.filteredCount;
+    this.contactResult.realContactCount = newContactResult.realContactCount;
+    this.contactResult.syntheticCount = newContactResult.syntheticCount;
     this.contactResult.geometricCenter = newContactResult.geometricCenter;
     this.contactResult.avgContactPoint = newContactResult.avgContactPoint;
     this.contactResult.avgContactNormal = newContactResult.avgContactNormal;
@@ -204,9 +207,30 @@ export class AnimationManager {
       if (newContactResult.flags.held) displayText += ' 🔒';
       contactsEl.textContent = displayText;
 
-      // Add tooltip with debug info
+      // Add tooltip with debug info including synthetic count
       const reasons = newContactResult.flags.reasons.join(', ');
-      contactsEl.title = `Raw: ${newContactResult.rawCount}, Filtered: ${newContactResult.filteredCount}${reasons ? '\nReasons: ' + reasons : ''}`;
+      const syntheticInfo = newContactResult.syntheticCount > 0
+        ? `\nReal: ${newContactResult.realContactCount}, Synthetic: ${newContactResult.syntheticCount}`
+        : '';
+      contactsEl.title = `Raw: ${newContactResult.rawCount}, Filtered: ${newContactResult.filteredCount}${syntheticInfo}${reasons ? '\nReasons: ' + reasons : ''}`;
+    }
+
+    // Update separate real/synthetic contact counts in UI
+    const realContactsEl = document.getElementById('realContacts');
+    const syntheticContactsEl = document.getElementById('syntheticContacts');
+
+    if (realContactsEl) {
+      realContactsEl.textContent = String(newContactResult.realContactCount || 0);
+    }
+
+    if (syntheticContactsEl) {
+      syntheticContactsEl.textContent = String(newContactResult.syntheticCount || 0);
+      // Style differently if synthetic contacts are present
+      if (newContactResult.syntheticCount > 0) {
+        syntheticContactsEl.style.fontWeight = 'bold';
+      } else {
+        syntheticContactsEl.style.fontWeight = 'normal';
+      }
     }
 
     if (this.contactResult.count > 0) {
@@ -249,114 +273,55 @@ export class AnimationManager {
         document.getElementById('velocity').textContent = `(${lv.x().toFixed(1)}, ${lv.y().toFixed(1)}, ${lv.z().toFixed(1)})`;
         A.destroy(lv);
       }
-
-      // Update line stencil dynamic values display
-      this.updateLineStencilDisplay(velocityMag, dynBody);
-    }
-  }
-
-  updateLineStencilDisplay(velocityMag, dynBody) {
-    // Calculate dynamic values using the same formulas as PiP4
-    const baseSpacing = window.pipManager && window.pipManager.pip4 ? window.pipManager.pip4.lineSpacing : 8;
-    const baseWidth = window.pipManager && window.pipManager.pip4 ? window.pipManager.pip4.lineWidth : 2;
-    const intensityScale = window.lineIntensityScale || 1.0;
-
-    // Calculate normal force
-    let normalForce = 1.0;
-    if (dynBody) {
-      const mass = dynBody.getMass();
-      normalForce = mass * window.gravity;
-    }
-
-    // Physics-responsive calculations (matching PiP4 logic)
-    const normalizedForce = Math.min(normalForce / 30.0, 1.0);
-    const velocityFactor = Math.min(velocityMag / 5.0, 1.0);
-
-    // Dynamic spacing
-    let dynamicSpacing;
-    if (normalizedForce < 0.3 && velocityFactor > 0.5) {
-      dynamicSpacing = baseSpacing * (2.0 + velocityFactor * 3.0);
-    } else {
-      dynamicSpacing = baseSpacing * (1.0 + velocityFactor * 1.0);
-    }
-
-    // Dynamic width
-    const dynamicWidth = baseWidth * (0.5 + normalizedForce * 2.0);
-
-    // Dynamic intensity
-    const baseIntensity = 0.6;
-    const forceMultiplier = 0.5 + normalizedForce * 1.5;
-    const scaleMultiplier = intensityScale * 2.0;
-    const finalIntensity = Math.min(1.0, baseIntensity * forceMultiplier * scaleMultiplier);
-
-    // Update UI displays
-    const actualSpacingEl = document.getElementById('actualSpacing');
-    if (actualSpacingEl) {
-      actualSpacingEl.textContent = dynamicSpacing.toFixed(1) + ' px';
-    }
-
-    const actualWidthEl = document.getElementById('actualWidth');
-    if (actualWidthEl) {
-      actualWidthEl.textContent = dynamicWidth.toFixed(1) + ' px';
-    }
-
-    const actualIntensityEl = document.getElementById('actualIntensity');
-    if (actualIntensityEl) {
-      actualIntensityEl.textContent = Math.round(finalIntensity * 100) + '%';
-    }
-
-    const stencilVelocityEl = document.getElementById('stencilVelocity');
-    if (stencilVelocityEl) {
-      stencilVelocityEl.textContent = velocityMag.toFixed(2) + ' m/s';
     }
   }
   
   updateVisualization() {
     // Use visualization manager instead of global functions
     this.visualizationManager.updateContacts(
-      window.contactSamples.slice(0, this.contactResult.count), 
-      window.showContacts
+      window.state.contactSamples,
+      window.state.showContacts
     );
     this.visualizationManager.updateGeomCenter(
-      this.contactResult.count > 0 ? this.contactResult.geometricCenter : null, 
-      window.showGeomCenter
+      this.contactResult.filteredCount > 0 ? this.contactResult.geometricCenter : null,
+      window.state.showGeomCenter
     );
   }
   
   computeBoundingBox(dynBody, dynMesh) {
-    if (dynMesh && window.contactSamples.length > 0) {
+    if (dynMesh && window.state.contactSamples.length > 0) {
       const isSoftBody = dynMesh.userData.isSoftBody || false;
       const obb = window.computeBoundingBox(
-        window.contactSamples,
+        window.state.contactSamples,
         this.contactResult.avgContactPoint,
         this.contactResult.avgContactNormal,
-        window.bboxAlgorithm,
+        window.state.bboxAlgorithm,
         window.CFG,
         window.THREE,
         dynBody,
         window.A,
-        window.lastOBB,
-        window.previousVelocity,
-        window.previousAngle,
+        window.state.lastOBB,
+        window.state.previousVelocity,
+        window.state.previousAngle,
         window.ANGLE_STABILITY_THRESHOLD,
         isSoftBody
       );
-      
+
       if (obb) {
-        window.lastOBB = obb;
+        window.state.lastOBB = obb;
         // Use visualization manager instead of global function
         this.visualizationManager.updateOBB(
-          obb, 
-          window.paddingWidthScale, 
-          window.paddingHeightScale, 
-          window.paddingDepthTopScale, 
-          window.paddingDepthBottomScale
+          obb,
+          window.state.paddingWidthScale,
+          window.state.paddingHeightScale,
+          window.state.paddingDepthTopScale,
+          window.state.paddingDepthBottomScale
         );
         const angDeg = (obb.theta * 180 / Math.PI).toFixed(2);
         document.getElementById('obbAng').textContent = angDeg + '°';
       }
     } else {
-      window.lastOBB = null;
+      window.state.lastOBB = null;
       // Hide OBB through visualization manager
       this.visualizationManager.toggleOBB(false);
       document.getElementById('obbAng').textContent = '—';
@@ -366,7 +331,7 @@ export class AnimationManager {
   renderPiPViews(now, dynBody, dynMesh) {
     // Calculate rotation angle from velocity for PiP camera orientation
     let cameraRotation = null;
-    if (dynBody && window.lastOBB) {
+    if (dynBody && window.state.lastOBB) {
       if (dynMesh && dynMesh.userData.isSoftBody) {
         // For soft bodies, calculate average velocity
         const nodes = dynBody.get_m_nodes();
@@ -441,34 +406,45 @@ export class AnimationManager {
     
     // Render PiP views
     const intersectionData = this.pipManager.renderAll(
-      window.pipEnabled,
-      window.lastOBB,
-      window.paddingWidthScale,
-      window.paddingHeightScale,
-      window.paddingDepthTopScale,
-      window.paddingDepthBottomScale,
+      window.state.pipEnabled,
+      window.state.lastOBB,
+      window.state.paddingWidthScale,
+      window.state.paddingHeightScale,
+      window.state.paddingDepthTopScale,
+      window.state.paddingDepthBottomScale,
       window.fieldFlowCanvases,
       cameraRotation,
-      window.showPiP4,
+      window.state.showPiP4,
       velocity,
       window.normalForce,
-      window.lineIntensityScale,
+      window.state.lineIntensityScale,
       angularVelocity
     );
-    
+
     return intersectionData;
   }
-  
+
   handleStamping(now, dynBody, dynMesh) {
-    if (window.enableStamping && window.lastOBB && now - this.lastStampTime > window.stampInterval) {
+    if (window.state.enableStamping && window.state.lastOBB && now - this.lastStampTime > window.state.stampInterval) {
       this.lastStampTime = now;
       
       // Calculate stamp position
       let stampWorldX, stampWorldZ;
-      
-      if (window.useBBoxCenter) {
-        stampWorldX = window.lastOBB.center.x;
-        stampWorldZ = window.lastOBB.center.z;
+
+      if (window.state.useBBoxCenter) {
+        // Use actual 3D bounding box center (from mesh/body)
+        if (dynMesh) {
+          // Calculate 3D bounding box center from mesh
+          const box = new window.THREE.Box3().setFromObject(dynMesh);
+          const center = new window.THREE.Vector3();
+          box.getCenter(center);
+          stampWorldX = center.x;
+          stampWorldZ = center.z;
+        } else {
+          // Fallback to OBB center if no mesh
+          stampWorldX = window.state.lastOBB.center.x;
+          stampWorldZ = window.state.lastOBB.center.z;
+        }
       } else {
         if (this.contactResult.count > 0) {
           stampWorldX = this.contactResult.geometricCenter.x;
@@ -539,8 +515,8 @@ export class AnimationManager {
       // Use stamping manager to handle stamping
       this.stampingManager.stampIntersection(
         now,
-        window.lastOBB,
-        window.contactSamples,
+        window.state.lastOBB,
+        window.state.contactSamples,
         this.contactResult,
         this.pipManager,
         velocity,

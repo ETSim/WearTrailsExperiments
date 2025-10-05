@@ -86,22 +86,42 @@ export function updateContactPoints(contactPointsGroup, samples, showContacts, C
   while (contactPointsGroup.children.length > 0) {
     contactPointsGroup.remove(contactPointsGroup.children[0]);
   }
-  
+
   if (!showContacts || samples.length === 0) return;
-  
-  // Add sphere at each contact point with glow effect
-  const geom = new THREE.SphereGeometry(CFG.CONTACT_POINT_SIZE, 12, 12);
-  const mat = new THREE.MeshStandardMaterial({ 
+
+  // Separate geometry for real and synthetic contacts
+  const realGeom = new THREE.SphereGeometry(CFG.CONTACT_POINT_SIZE, 12, 12);
+  const syntheticGeom = new THREE.SphereGeometry(CFG.CONTACT_POINT_SIZE * 0.8, 8, 8); // Slightly smaller
+
+  // Real contacts: RED with strong glow
+  const realMat = new THREE.MeshStandardMaterial({
     color: 0xff0000,
     emissive: 0xff0000,
     emissiveIntensity: 0.5,
     metalness: 0.2,
     roughness: 0.3
   });
-  
+
+  // Synthetic/augmented contacts: ORANGE with subtle glow
+  const syntheticMat = new THREE.MeshStandardMaterial({
+    color: 0xff8800,      // Orange color
+    emissive: 0xff6600,
+    emissiveIntensity: 0.3,
+    metalness: 0.1,
+    roughness: 0.5,
+    transparent: true,
+    opacity: 0.7         // Semi-transparent to distinguish
+  });
+
   for (const pt of samples) {
+    // Choose geometry and material based on whether contact is synthetic
+    const isSynthetic = pt.isSynthetic === true;
+    const geom = isSynthetic ? syntheticGeom : realGeom;
+    const mat = isSynthetic ? syntheticMat : realMat;
+
     const sphere = new THREE.Mesh(geom, mat);
     sphere.position.set(pt.x, pt.y, pt.z);
+    sphere.userData.isSynthetic = isSynthetic; // Store for debugging
     contactPointsGroup.add(sphere);
   }
 }

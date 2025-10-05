@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // Import modules
 import { generateRandomGroundTexture, generateRandomCubeTexture } from './textures.js';
-import { sampleContacts } from './contacts.js';
+import { sampleContacts, getRealContacts, getSyntheticContacts, separateContacts } from './contacts.js';
 import { computeBoundingBox } from './bounding-box/index.js';
 import { BodyManager } from './body-manager.js';
 import { 
@@ -258,15 +258,11 @@ groundBody.setRestitution(0.6); // Moderate restitution
 groundBody.setRollingFriction(0.1); // Reduce rolling friction
 world.addRigidBody(groundBody);
 
-console.log('✓ Single ground body created at y=-0.5');
-
 // ======= Reset Boundary Configuration =======
 // No physical walls needed - soft bodies and rigid bodies will be reset based on position checks
 // This allows soft bodies to pass through without collision while still resetting when out of bounds
 const RESET_BOUNDARY = CFG.PLANE_SIZE / 2; // Objects reset when exceeding this distance
 const RESET_Y_THRESHOLD = -5; // Objects reset when falling below this Y position
-
-console.log(`✓ Reset boundary configured at ±${RESET_BOUNDARY}m (X/Z), Y < ${RESET_Y_THRESHOLD}m`);
 
 // ======= Wall Obstacle =======
 // Create a physical wall obstacle in the middle of the plane
@@ -324,6 +320,7 @@ let showStamps = false;
 let useBBoxCenter = false; // Use bounding box center instead of geometric center
 let lineIntensityScale = 1.0; // Intensity scale for line stencil (1.0 = 100%)
 let useCustomPattern = false; // Use custom pattern instead of generated lines
+let enableSynthetic = true; // Enable synthetic contact augmentation
 let enableField = true;
 let enableFlow = true;
 let enableCombined = true;
@@ -1008,7 +1005,6 @@ if (patternFileEl) {
           useCustomPattern = true;
           document.getElementById('useCustomPattern').checked = true;
           pipManager.pip4.setUseCustomPattern(true);
-          console.log('Custom pattern loaded successfully');
         }
       } catch (error) {
         console.error('Failed to load custom pattern:', error);
@@ -1031,6 +1027,13 @@ const useBBoxCenterEl = document.getElementById('useBBoxCenter');
 if (useBBoxCenterEl) {
   useBBoxCenterEl.onchange = (e) => {
     useBBoxCenter = e.target.checked;
+  };
+}
+
+const enableSyntheticEl = document.getElementById('enableSynthetic');
+if (enableSyntheticEl) {
+  enableSyntheticEl.onchange = (e) => {
+    enableSynthetic = e.target.checked;
   };
 }
 
@@ -1314,9 +1317,8 @@ function animate() {
         
         // Reset if center of mass is outside reset boundaries
         if (Math.abs(avgX) > RESET_BOUNDARY || 
-            Math.abs(avgZ) > RESET_BOUNDARY || 
+            Math.abs(avgZ) > RESET_BOUNDARY ||
             avgY < RESET_Y_THRESHOLD) {
-          console.log(`Soft body reset: pos=(${avgX.toFixed(2)}, ${avgY.toFixed(2)}, ${avgZ.toFixed(2)})`);
           bodyManager.reset();
         }
       }
@@ -1331,9 +1333,8 @@ function animate() {
       
       // Reset if out of bounds (check X, Y, Z axes)
       if (Math.abs(p.x()) > RESET_BOUNDARY || 
-          Math.abs(p.z()) > RESET_BOUNDARY || 
+          Math.abs(p.z()) > RESET_BOUNDARY ||
           p.y() < RESET_Y_THRESHOLD) {
-        console.log(`Rigid body reset: pos=(${p.x().toFixed(2)}, ${p.y().toFixed(2)}, ${p.z().toFixed(2)})`);
         bodyManager.reset();
       }
     }
@@ -1343,6 +1344,9 @@ function animate() {
   const newContactResult = sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STABLE_BOX, softGroundThreshold);
   contactSamples = newContactResult.contactSamples;
   contactResult.count = newContactResult.count;
+  contactResult.filteredCount = newContactResult.filteredCount;
+  contactResult.realContactCount = newContactResult.realContactCount;
+  contactResult.syntheticCount = newContactResult.syntheticCount;
   contactResult.geometricCenter = newContactResult.geometricCenter;
   contactResult.avgContactPoint = newContactResult.avgContactPoint;
   contactResult.avgContactNormal = newContactResult.avgContactNormal;
@@ -1351,6 +1355,25 @@ function animate() {
   // Display filtered count for more accurate representation
   const statsDisplayCount = contactResult.filteredCount || 0;
   document.getElementById('contacts').textContent = String(statsDisplayCount);
+
+  // Update separate real/synthetic contact counts in UI
+  const realContactsEl = document.getElementById('realContacts');
+  const syntheticContactsEl = document.getElementById('syntheticContacts');
+
+  if (realContactsEl) {
+    realContactsEl.textContent = String(contactResult.realContactCount || 0);
+  }
+
+  if (syntheticContactsEl) {
+    syntheticContactsEl.textContent = String(contactResult.syntheticCount || 0);
+    // Style differently if synthetic contacts are present
+    if (contactResult.syntheticCount > 0) {
+      syntheticContactsEl.style.fontWeight = 'bold';
+    } else {
+      syntheticContactsEl.style.fontWeight = 'normal';
+    }
+  }
+
   if (statsDisplayCount > 0) {
     document.getElementById('gcenter').textContent =
       `(${contactResult.geometricCenter.x.toFixed(3)}, ${contactResult.geometricCenter.z.toFixed(3)})`;
@@ -1639,9 +1662,19 @@ function animate() {
           // Choose stamp position: bounding box center or geometric center of contacts
           let stampWorldX, stampWorldZ;
           if (useBBoxCenter) {
-            // Use bounding box center
-            stampWorldX = lastOBB.center.x;
-            stampWorldZ = lastOBB.center.z;
+            // Use actual 3D bounding box center (from mesh/body)
+            if (dynMesh) {
+              // Calculate 3D bounding box center from mesh
+              const box = new THREE.Box3().setFromObject(dynMesh);
+              const center = new THREE.Vector3();
+              box.getCenter(center);
+              stampWorldX = center.x;
+              stampWorldZ = center.z;
+            } else {
+              // Fallback to OBB center if no mesh
+              stampWorldX = lastOBB.center.x;
+              stampWorldZ = lastOBB.center.z;
+            }
           } else {
             // Use geometric center of contact points (default)
             stampWorldX = contactResult.geometricCenter.x;

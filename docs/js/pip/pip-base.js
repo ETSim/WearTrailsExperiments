@@ -66,13 +66,5 @@ export class PiPRenderer {
     
     camera.lookAt(center);
     camera.updateProjectionMatrix();
-    
-    // Debug logging for camera setup
-    if (Math.random() < 0.01) { // Log occasionally to avoid spam
-      console.log(`PiP Camera: pos=(${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}), ` +
-                  `bounds=[${camera.left.toFixed(2)}, ${camera.right.toFixed(2)}, ${camera.bottom.toFixed(2)}, ${camera.top.toFixed(2)}], ` +
-                  `near=${camera.near.toFixed(2)}, far=${camera.far.toFixed(2)}, ` +
-                  `bbox=(${w.toFixed(2)}×${h.toFixed(2)}×${d.toFixed(2)})`);
-    }
   }
 }

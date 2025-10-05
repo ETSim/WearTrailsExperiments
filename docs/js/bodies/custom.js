@@ -49,7 +49,6 @@ export async function makeCustomBody(THREE, A, scene, mass, friction, restitutio
     world.addRigidBody(body);
     return { mesh, body };
   } catch(e) {
-    console.error('Failed to load custom body:', e);
     return null;
   }
 }

@@ -4,4 +4,3 @@ export { PhysicsManager } from './physics-manager.js';
 export { GroundManager } from './ground-manager.js';
 export { VisualizationManager } from './visualization-manager.js';
 export { StampingManager } from './stamping-manager.js';
-export { FieldFlowManager } from './field-flow-manager.js';

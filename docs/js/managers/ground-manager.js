@@ -65,8 +65,6 @@ export class GroundManager {
     this.groundBody.setRestitution(0.6); // Moderate restitution
     this.groundBody.setRollingFriction(0.1); // Reduce rolling friction
     this.world.addRigidBody(this.groundBody);
-
-    console.log('✓ Single ground body created at y=-0.5');
   }
 
   createWallObstacle() {

@@ -6,16 +6,15 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // Import modules
 import { generateRandomGroundTexture, generateRandomCubeTexture } from './textures.js';
-import { sampleContacts } from './contacts.js';
+import { sampleContacts, getRealContacts, getSyntheticContacts, separateContacts } from './contacts.js';
 import { computeBoundingBox } from './bounding-box/index.js';
 import { BodyManager } from './body-manager.js';
-import { UVPaintSystem } from './uv-paint.js';
-import { 
-  createOBBVisualization, 
+import {
+  createOBBVisualization,
   updateOBBVisualization,
   createContactVisualization,
   updateContactPoints,
-  updateGeomMeanMarker 
+  updateGeomMeanMarker
 } from './visualization.js';
 import { 
   setupPiPCanvases, 
@@ -30,8 +29,8 @@ const A = await Ammo();
 // ======= Configuration =======
 const CFG = {
   PLANE_SIZE: 40,
-  PIP_W: 512,
-  PIP_H: 512,
+  PIP_W: 256,
+  PIP_H: 256,
   OBB_DEPTH: 2.5,
   MIN_CONTACT_SIZE: 0.05,
   CONTACT_POINT_SIZE: 0.12,
@@ -290,268 +289,308 @@ class StampingManager {
   }
 }
 
-// ======= Field and Flow Manager Class =======
-class FieldFlowManager {
-  constructor(scene, CFG) {
+
+// ======= Flow Accumulation Manager Class =======
+class FlowAccumulationManager {
+  constructor(scene, CFG, THREE) {
     this.scene = scene;
     this.CFG = CFG;
-    this.fieldCanvas = null;
-    this.fieldCtx = null;
-    this.fieldTexture = null;
-    this.fieldOverlay = null;
+    this.THREE = THREE;
     this.flowCanvas = null;
     this.flowCtx = null;
     this.flowTexture = null;
     this.flowOverlay = null;
-    this.fieldIntensity = null;
-    this.flowDirX = null;
-    this.flowDirZ = null;
-    this.flowMagnitude = null;
+
+    // Accumulators
+    this.flowDirX = null;        // Average direction X (for visualization)
+    this.flowDirZ = null;        // Average direction Z (for visualization)
+    this.wearAccumulation = null; // Accumulated wear: velocity × force × intensity
+
+    // Parameters
+    this.flowAlpha = 0.15;
+    this.density = 1.0; // kg/m²
   }
 
   init() {
-    // Field intensity layer
-    this.fieldCanvas = document.createElement('canvas');
-    this.fieldCanvas.width = 256;
-    this.fieldCanvas.height = 256;
-    this.fieldCtx = this.fieldCanvas.getContext('2d', { willReadFrequently: true });
-    this.fieldCtx.fillStyle = 'black';
-    this.fieldCtx.fillRect(0, 0, 256, 256);
-
-    this.fieldIntensity = new Float32Array(256 * 256);
-    this.fieldTexture = new THREE.CanvasTexture(this.fieldCanvas);
-    this.fieldTexture.wrapS = THREE.ClampToEdgeWrapping;
-    this.fieldTexture.wrapT = THREE.ClampToEdgeWrapping;
-
-    this.fieldOverlay = new THREE.Mesh(
-      new THREE.PlaneGeometry(this.CFG.PLANE_SIZE, this.CFG.PLANE_SIZE),
-      new THREE.MeshBasicMaterial({
-        map: this.fieldTexture,
-        transparent: true,
-        opacity: 0.7,
-        side: THREE.FrontSide,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending
-      })
-    );
-    this.fieldOverlay.rotation.x = -Math.PI / 2;
-    this.fieldOverlay.position.y = 0.02;
-    this.fieldOverlay.visible = false;
-    this.fieldOverlay.renderOrder = 900; // Below stamps
-    this.scene.add(this.fieldOverlay);
-
-    // Flow direction layer
+    // Flow accumulation canvas (same resolution as stamps)
     this.flowCanvas = document.createElement('canvas');
-    this.flowCanvas.width = 256;
-    this.flowCanvas.height = 256;
-    this.flowCtx = this.flowCanvas.getContext('2d', { willReadFrequently: true });
-    this.flowCtx.fillStyle = 'black';
-    this.flowCtx.fillRect(0, 0, 256, 256);
+    this.flowCanvas.width = 2048;
+    this.flowCanvas.height = 2048;
+    this.flowCtx = this.flowCanvas.getContext('2d', { willReadFrequently: true, alpha: true });
 
-    this.flowDirX = new Float32Array(256 * 256);
-    this.flowDirZ = new Float32Array(256 * 256);
-    this.flowMagnitude = new Float32Array(256 * 256);
-    this.flowTexture = new THREE.CanvasTexture(this.flowCanvas);
-    this.flowTexture.wrapS = THREE.ClampToEdgeWrapping;
-    this.flowTexture.wrapT = THREE.ClampToEdgeWrapping;
+    // Initialize accumulators
+    const size = this.flowCanvas.width * this.flowCanvas.height;
+    this.flowDirX = new Float32Array(size);
+    this.flowDirZ = new Float32Array(size);
+    this.wearAccumulation = new Float32Array(size);
 
-    this.flowOverlay = new THREE.Mesh(
-      new THREE.PlaneGeometry(this.CFG.PLANE_SIZE, this.CFG.PLANE_SIZE),
-      new THREE.MeshBasicMaterial({
+    // Clear canvas
+    this.flowCtx.clearRect(0, 0, 2048, 2048);
+
+    // Create texture
+    this.flowTexture = new this.THREE.CanvasTexture(this.flowCanvas);
+    this.flowTexture.wrapS = this.THREE.ClampToEdgeWrapping;
+    this.flowTexture.wrapT = this.THREE.ClampToEdgeWrapping;
+    this.flowTexture.minFilter = this.THREE.LinearFilter;
+    this.flowTexture.magFilter = this.THREE.LinearFilter;
+
+    // Flow overlay on ground
+    this.flowOverlay = new this.THREE.Mesh(
+      new this.THREE.PlaneGeometry(this.CFG.PLANE_SIZE, this.CFG.PLANE_SIZE),
+      new this.THREE.MeshBasicMaterial({
         map: this.flowTexture,
+        color: 0xffffff,
         transparent: true,
-        opacity: 0.7,
-        side: THREE.FrontSide,
+        opacity: 0.8,
+        side: this.THREE.FrontSide,
         depthWrite: false,
-        blending: THREE.AdditiveBlending
+        depthTest: false,
+        blending: this.THREE.AdditiveBlending
       })
     );
     this.flowOverlay.rotation.x = -Math.PI / 2;
-    this.flowOverlay.position.y = 0.03;
+    this.flowOverlay.position.y = 0.03; // Above stamps
+    this.flowOverlay.receiveShadow = false;
+    this.flowOverlay.castShadow = false;
     this.flowOverlay.visible = false;
-    this.flowOverlay.renderOrder = 950; // Below stamps, above field
+    this.flowOverlay.renderOrder = 999;
     this.scene.add(this.flowOverlay);
 
     return {
-      fieldCanvas: this.fieldCanvas,
-      fieldCtx: this.fieldCtx,
-      fieldTexture: this.fieldTexture,
-      fieldOverlay: this.fieldOverlay,
       flowCanvas: this.flowCanvas,
       flowCtx: this.flowCtx,
       flowTexture: this.flowTexture,
-      flowOverlay: this.flowOverlay,
-      fieldIntensity: this.fieldIntensity,
-      flowDirX: this.flowDirX,
-      flowDirZ: this.flowDirZ,
-      flowMagnitude: this.flowMagnitude
+      flowOverlay: this.flowOverlay
     };
   }
 
-  worldToFieldPixel(worldX, worldZ) {
-    const x = ((worldX + this.CFG.PLANE_SIZE / 2) / this.CFG.PLANE_SIZE) * 256;
-    const y = ((worldZ + this.CFG.PLANE_SIZE / 2) / this.CFG.PLANE_SIZE) * 256;
-    return { x: Math.floor(Math.max(0, Math.min(255, x))), y: Math.floor(Math.max(0, Math.min(255, y))) };
+  /**
+   * Cross product for rotational velocity: ω × r
+   */
+  crossProduct(omega, r) {
+    return {
+      x: omega.y * r.z - omega.z * r.y,
+      y: omega.z * r.x - omega.x * r.z,
+      z: omega.x * r.y - omega.y * r.x
+    };
   }
 
-  accumulateField(worldX, worldZ, normalForce, fieldGain, radius = 10) {
-    const center = this.worldToFieldPixel(worldX, worldZ);
-    const radiusSq = radius * radius;
-    
-    const referenceForce = 2.0 * 9.81;
-    const forceMultiplier = Math.sqrt(normalForce / referenceForce);
-    const effectiveGain = fieldGain * forceMultiplier;
-    
-    for (let dy = -radius; dy <= radius; dy++) {
-      for (let dx = -radius; dx <= radius; dx++) {
-        const distSq = dx * dx + dy * dy;
-        if (distSq <= radiusSq) {
-          const px = center.x + dx;
-          const py = center.y + dy;
-          if (px >= 0 && px < 256 && py >= 0 && py < 256) {
-            const idx = py * 256 + px;
-            const falloff = 1.0 - Math.sqrt(distSq) / radius;
-            this.fieldIntensity[idx] = Math.min(10.0, this.fieldIntensity[idx] + effectiveGain * falloff);
+  /**
+   * Convert HSV to RGB
+   */
+  hsvToRgb(h, s, v) {
+    const i = Math.floor(h * 6);
+    const f = h * 6 - i;
+    const p = v * (1 - s);
+    const q = v * (1 - f * s);
+    const t = v * (1 - (1 - f) * s);
+
+    let r, g, b;
+    switch (i % 6) {
+      case 0: r = v; g = t; b = p; break;
+      case 1: r = q; g = v; b = p; break;
+      case 2: r = p; g = v; b = t; break;
+      case 3: r = p; g = q; b = v; break;
+      case 4: r = t; g = p; b = v; break;
+      case 5: r = v; g = p; b = q; break;
+    }
+
+    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+  }
+
+  /**
+   * Accumulate flow at stamping location
+   */
+  accumulate(pixels1, pixels2, velocity, angularVelocity, normalForceValue, lastOBB, stampWorldX, stampWorldZ) {
+    if (!velocity || !lastOBB) return;
+
+    const W_pip = this.CFG.PIP_W;
+    const H_pip = this.CFG.PIP_H;
+    const W_canvas = this.flowCanvas.width;
+    const H_canvas = this.flowCanvas.height;
+
+    // Get OBB parameters
+    const center = lastOBB.center;
+    const width = lastOBB.width;
+    const height = lastOBB.height;
+    const e1 = lastOBB.e1;
+    const e2 = lastOBB.e2;
+
+    // Contact plane normal (ground plane: pointing up)
+    const normal = { x: 0, y: 1, z: 0 };
+
+    // Calculate stamp size
+    const paddedWidth = width * window.state.paddingWidthScale;
+    const paddedHeight = height * window.state.paddingHeightScale;
+    const stampSizeWorld = Math.max(paddedWidth, paddedHeight);
+
+    // Process each pixel in intersection
+    for (let y = 0; y < H_pip; y++) {
+      for (let x = 0; x < W_pip; x++) {
+        const pipIdx = (y * W_pip + x) * 4;
+
+        // Check if pixel is in intersection
+        const has1 = (pixels1[pipIdx] | pixels1[pipIdx+1] | pixels1[pipIdx+2]) > 10;
+        const has2 = (pixels2[pipIdx] | pixels2[pipIdx+1] | pixels2[pipIdx+2]) > 10;
+
+        if (has1 && has2) {
+          // Convert PiP pixel to world space (relative to OBB center)
+          const u = (x / W_pip) - 0.5;
+          const v = (y / H_pip) - 0.5;
+
+          const worldX = center.x + u * width * e1.x + v * height * e2.x;
+          const worldZ = center.z + u * width * e1.z + v * height * e2.z;
+
+          // Position vector from center
+          const r = {
+            x: worldX - center.x,
+            y: 0,
+            z: worldZ - center.z
+          };
+
+          // Calculate rotational velocity: v_rot = ω × r
+          let v_rot = { x: 0, y: 0, z: 0 };
+          if (angularVelocity) {
+            v_rot = this.crossProduct(angularVelocity, r);
+          }
+
+          // Total 3D velocity
+          const v_3d = {
+            x: velocity.x + v_rot.x,
+            y: v_rot.y,
+            z: velocity.z + v_rot.z
+          };
+
+          // Project to tangent plane (remove normal component)
+          const v_dot_n = v_3d.x * normal.x + v_3d.y * normal.y + v_3d.z * normal.z;
+          const v_tangential = {
+            x: v_3d.x - v_dot_n * normal.x,
+            y: v_3d.y - v_dot_n * normal.y,
+            z: v_3d.z - v_dot_n * normal.z
+          };
+
+          // Calculate normal force component for this pixel
+          const v_normal_component = Math.max(0, v_dot_n);
+          const f_normal = 0.5 * this.density * v_normal_component * v_normal_component;
+
+          // Calculate tangential velocity magnitude
+          const velMag = Math.sqrt(
+            v_tangential.x * v_tangential.x +
+            v_tangential.z * v_tangential.z
+          );
+
+          if (velMag > 0.01) {
+            // Map world coordinates to ground canvas coordinates
+            const canvasX = Math.round(((worldX + this.CFG.PLANE_SIZE / 2) / this.CFG.PLANE_SIZE) * W_canvas);
+            const canvasY = Math.round(((worldZ + this.CFG.PLANE_SIZE / 2) / this.CFG.PLANE_SIZE) * H_canvas);
+
+            // Check bounds
+            if (canvasX >= 0 && canvasX < W_canvas && canvasY >= 0 && canvasY < H_canvas) {
+              const canvasIdx = canvasY * W_canvas + canvasX;
+
+              // Normalize direction
+              const normDirX = v_tangential.x / velMag;
+              const normDirZ = v_tangential.z / velMag;
+
+              // Wear formula: Tangential Velocity × Normal Force × Intensity
+              // Both velocity AND force must be present for wear to occur (multiplicative)
+              const wearRate = velMag * f_normal * this.flowAlpha;
+              this.wearAccumulation[canvasIdx] += wearRate;
+
+              // Track average direction using exponential moving average (for visualization)
+              const dirAlpha = 0.1; // Slower update for direction (smoothing)
+              this.flowDirX[canvasIdx] = this.flowDirX[canvasIdx] * (1 - dirAlpha) + normDirX * dirAlpha;
+              this.flowDirZ[canvasIdx] = this.flowDirZ[canvasIdx] * (1 - dirAlpha) + normDirZ * dirAlpha;
+            }
           }
         }
       }
     }
   }
 
-  accumulateFlow(worldX, worldZ, velX, velZ, flowAlpha, similarityThreshold, radius = 20) {
-    const center = this.worldToFieldPixel(worldX, worldZ);
-    const velMag = Math.sqrt(velX * velX + velZ * velZ);
-    if (velMag < 0.01) return;
-    
-    const normVelX = velX / velMag;
-    const normVelZ = velZ / velMag;
-    const radiusSq = radius * radius;
-    
-    for (let dy = -radius; dy <= radius; dy++) {
-      for (let dx = -radius; dx <= radius; dx++) {
-        const distSq = dx * dx + dy * dy;
-        if (distSq <= radiusSq) {
-          const px = center.x + dx;
-          const py = center.y + dy;
-          if (px >= 0 && px < 256 && py >= 0 && py < 256) {
-            const idx = py * 256 + px;
-            const falloff = 1.0 - Math.sqrt(distSq) / radius;
-            
-            const existingMag = this.flowMagnitude[idx];
-            let similarity = 1.0;
-            
-            if (existingMag > 0.01) {
-              const existingDirX = this.flowDirX[idx] / existingMag;
-              const existingDirZ = this.flowDirZ[idx] / existingMag;
-              similarity = normVelX * existingDirX + normVelZ * existingDirZ;
-            }
-            
-            if (similarity > similarityThreshold) {
-              this.flowDirX[idx] += flowAlpha * normVelX * falloff * velMag;
-              this.flowDirZ[idx] += flowAlpha * normVelZ * falloff * velMag;
-              this.flowMagnitude[idx] = Math.sqrt(this.flowDirX[idx] * this.flowDirX[idx] + this.flowDirZ[idx] * this.flowDirZ[idx]);
-            }
-          }
-        }
+  /**
+   * Render accumulated wear as heatmap (velocity × force × intensity)
+   */
+  render() {
+    const W = this.flowCanvas.width;
+    const H = this.flowCanvas.height;
+
+    // Find max wear for normalization
+    let maxWear = 0.01;
+    for (let i = 0; i < this.wearAccumulation.length; i++) {
+      if (this.wearAccumulation[i] > maxWear) {
+        maxWear = this.wearAccumulation[i];
       }
     }
-  }
 
-  renderField(fieldGain) {
-    const imgData = this.fieldCtx.createImageData(256, 256);
-    const data = imgData.data;
-    
-    const PASSES_FOR_WHITE = 500;
-    
-    for (let i = 0; i < this.fieldIntensity.length; i++) {
-      const equivalentStamps = this.fieldIntensity[i] / fieldGain;
-      const normalized = Math.min(1.0, equivalentStamps / PASSES_FOR_WHITE);
-      const gray = Math.floor(255 * normalized);
-      
-      const idx = i * 4;
-      data[idx] = gray;
-      data[idx + 1] = gray;
-      data[idx + 2] = gray;
-      data[idx + 3] = Math.floor(255 * normalized);
-    }
-    
-    this.fieldCtx.putImageData(imgData, 0, 0);
-    this.fieldTexture.needsUpdate = true;
-  }
+    // Create output image
+    const outputData = this.flowCtx.createImageData(W, H);
 
-  renderFlow() {
-    const imgData = this.flowCtx.createImageData(256, 256);
-    const data = imgData.data;
-    
-    let maxMag = 0;
-    for (let i = 0; i < this.flowMagnitude.length; i++) {
-      if (this.flowMagnitude[i] > maxMag) maxMag = this.flowMagnitude[i];
-    }
-    
-    if (maxMag < 0.01) maxMag = 1.0;
-    
-    for (let i = 0; i < this.flowMagnitude.length; i++) {
-      const mag = this.flowMagnitude[i];
+    for (let i = 0; i < this.wearAccumulation.length; i++) {
+      const wear = this.wearAccumulation[i];
       const idx = i * 4;
-      
-      if (mag > 0.001) {
-        const dirX = this.flowDirX[i] / mag;
-        const dirZ = this.flowDirZ[i] / mag;
-        
-        const angle = Math.atan2(dirZ, dirX);
-        const hue = (angle + Math.PI) / (2 * Math.PI);
-        
-        const normalizedMag = Math.min(1.0, mag / maxMag);
-        
-        const h = hue;
-        const s = normalizedMag;
-        const v = 1.0;
-        
-        const i_h = Math.floor(h * 6);
-        const f = h * 6 - i_h;
-        const p = v * (1 - s);
-        const q = v * (1 - f * s);
-        const t = v * (1 - (1 - f) * s);
-        
+
+      // Normalize wear intensity
+      const wearIntensity = wear / maxWear;
+
+      if (wearIntensity > 0.001) {
+        // Heatmap: Black -> Blue -> Cyan -> Green -> Yellow -> Red -> White
         let r, g, b;
-        switch (i_h % 6) {
-          case 0: r = v; g = t; b = p; break;
-          case 1: r = q; g = v; b = p; break;
-          case 2: r = p; g = v; b = t; break;
-          case 3: r = p; g = q; b = v; break;
-          case 4: r = t; g = p; b = v; break;
-          case 5: r = v; g = p; b = q; break;
-          default: r = v; g = t; b = p; break;
+        const t = Math.min(1.0, wearIntensity);
+
+        if (t < 0.25) {
+          // Black to Blue
+          const s = t / 0.25;
+          r = 0;
+          g = 0;
+          b = Math.round(s * 255);
+        } else if (t < 0.5) {
+          // Blue to Cyan
+          const s = (t - 0.25) / 0.25;
+          r = 0;
+          g = Math.round(s * 255);
+          b = 255;
+        } else if (t < 0.75) {
+          // Cyan to Yellow
+          const s = (t - 0.5) / 0.25;
+          r = Math.round(s * 255);
+          g = 255;
+          b = Math.round((1 - s) * 255);
+        } else {
+          // Yellow to Red to White
+          const s = (t - 0.75) / 0.25;
+          r = 255;
+          g = Math.round((1 - s * 0.5) * 255);
+          b = Math.round(s * 255);
         }
-        
-        data[idx] = Math.floor(r * 255);
-        data[idx + 1] = Math.floor(g * 255);
-        data[idx + 2] = Math.floor(b * 255);
-        data[idx + 3] = Math.floor(normalizedMag * 255);
+
+        outputData.data[idx] = r;
+        outputData.data[idx + 1] = g;
+        outputData.data[idx + 2] = b;
+        outputData.data[idx + 3] = Math.round(Math.min(255, t * 255));
       } else {
-        data[idx] = 0;
-        data[idx + 1] = 0;
-        data[idx + 2] = 0;
-        data[idx + 3] = 0;
+        // Transparent
+        outputData.data[idx] = 0;
+        outputData.data[idx + 1] = 0;
+        outputData.data[idx + 2] = 0;
+        outputData.data[idx + 3] = 0;
       }
     }
-    
-    this.flowCtx.putImageData(imgData, 0, 0);
-    this.flowTexture.needsUpdate = true;
-  }
 
-  clearField() {
-    this.fieldIntensity.fill(0);
-    this.renderField(0.02);
+    // Render to canvas
+    this.flowCtx.putImageData(outputData, 0, 0);
+    this.flowTexture.needsUpdate = true;
   }
 
   clearFlow() {
     this.flowDirX.fill(0);
     this.flowDirZ.fill(0);
-    this.flowMagnitude.fill(0);
-    this.renderFlow();
+    this.wearAccumulation.fill(0);
+    this.flowCtx.clearRect(0, 0, this.flowCanvas.width, this.flowCanvas.height);
+    this.flowTexture.needsUpdate = true;
   }
 }
+
 
 // ======= UI Manager Class =======
 class UIManager {
@@ -569,9 +608,7 @@ class UIManager {
     this.setupPhysicsControls();
     this.setupVisualizationControls();
     this.setupStampingControls();
-    this.setupUVPaintControls();
-    this.setupFieldFlowControls();
-    
+
     this.initialized = true;
   }
 
@@ -741,14 +778,6 @@ class UIManager {
       };
     }
 
-    const showPiP4El = document.getElementById('showPiP4');
-    if (showPiP4El) {
-      showPiP4El.onchange = (e) => {
-        window.state.showPiP4 = e.target.checked;
-        document.getElementById('pip4').style.display = window.state.showPiP4 ? 'block' : 'none';
-      };
-    }
-
     const showContactsEl = document.getElementById('showContacts');
     if (showContactsEl) {
       showContactsEl.onchange = (e) => {
@@ -785,14 +814,11 @@ class UIManager {
         window.state.showStamps = e.target.checked;
         if (window.stampingManager && window.stampingManager.stampOverlay) {
           window.stampingManager.stampOverlay.visible = window.state.showStamps;
-          console.log(`Show Stamps toggled: ${window.state.showStamps}, overlay visible: ${window.stampingManager.stampOverlay.visible}`);
-          
+
           // Force texture update to ensure stamps are visible
           if (window.state.showStamps) {
             window.stampingManager.stampTexture.needsUpdate = true;
           }
-        } else {
-          console.warn('StampingManager or stampOverlay not available');
         }
       };
       
@@ -814,6 +840,46 @@ class UIManager {
       };
     }
 
+    const clearFlowEl = document.getElementById('clearFlow');
+    if (clearFlowEl) {
+      clearFlowEl.onclick = () => {
+        window.flowAccumulationManager.clearFlow();
+      };
+    }
+
+    const saveFlowEl = document.getElementById('saveFlow');
+    if (saveFlowEl) {
+      saveFlowEl.onclick = () => {
+        window.saveCanvasAsPNG(window.flowAccumulationManager.flowCanvas, 'wear-map.png');
+      };
+    }
+
+    const showFlowOverlayEl = document.getElementById('showFlowOverlay');
+    if (showFlowOverlayEl) {
+      showFlowOverlayEl.onchange = (e) => {
+        if (window.flowAccumulationManager && window.flowAccumulationManager.flowOverlay) {
+          window.flowAccumulationManager.flowOverlay.visible = e.target.checked;
+        }
+      };
+      // Initialize visibility
+      if (window.flowAccumulationManager && window.flowAccumulationManager.flowOverlay) {
+        window.flowAccumulationManager.flowOverlay.visible = showFlowOverlayEl.checked;
+      }
+    }
+
+    const wearIntensityEl = document.getElementById('wearIntensity');
+    const wearIntensityValEl = document.getElementById('wearIntensityVal');
+    if (wearIntensityEl && wearIntensityValEl) {
+      wearIntensityEl.oninput = (e) => {
+        const val = parseFloat(e.target.value) / 100.0;
+        wearIntensityValEl.textContent = val.toFixed(2);
+        if (window.flowAccumulationManager) {
+          window.flowAccumulationManager.flowAlpha = val;
+        }
+        // pip6 now shows instantaneous wear rate (no accumulation parameter)
+      };
+    }
+
 
     const stampIntervalEl = document.getElementById('stampInterval');
     if (stampIntervalEl) {
@@ -822,137 +888,8 @@ class UIManager {
         document.getElementById('stampIntervalVal').textContent = window.state.stampInterval + ' ms';
       };
     }
-
-    const lineIntensityEl = document.getElementById('lineIntensity');
-    if (lineIntensityEl) {
-      lineIntensityEl.oninput = (e) => {
-        const intensity = parseInt(e.target.value);
-        window.state.lineIntensityScale = intensity / 100;
-        document.getElementById('lineIntensityVal').textContent = intensity + '%';
-      };
-    }
   }
 
-  setupUVPaintControls() {
-    // Enable/disable UV paint
-    const enableUVPaintEl = document.getElementById('enableUVPaint');
-    if (enableUVPaintEl) {
-      enableUVPaintEl.onchange = (e) => {
-        window.state.enableUVPaint = e.target.checked;
-        if (window.animationManager && window.animationManager.uvPaintSystem) {
-          window.animationManager.uvPaintSystem.setEnabled(e.target.checked);
-        }
-      };
-    }
-
-    // Clear UV paint
-    const clearUVPaintEl = document.getElementById('clearUVPaint');
-    if (clearUVPaintEl) {
-      clearUVPaintEl.onclick = () => {
-        if (window.animationManager && window.animationManager.uvPaintSystem) {
-          window.animationManager.uvPaintSystem.clearPaint();
-        }
-      };
-    }
-
-    // Save UV paint
-    const saveUVPaintEl = document.getElementById('saveUVPaint');
-    if (saveUVPaintEl) {
-      saveUVPaintEl.onclick = () => {
-        if (window.animationManager && window.animationManager.uvPaintSystem) {
-          const canvas = window.animationManager.uvPaintSystem.getGroundUVCanvas();
-          if (canvas) {
-            const link = document.createElement('a');
-            link.download = `ground-uv-paint-${Date.now()}.png`;
-            link.href = canvas.toDataURL();
-            link.click();
-          }
-        }
-      };
-    }
-  }
-
-  setupFieldFlowControls() {
-    const enableFieldEl = document.getElementById('enableField');
-    if (enableFieldEl) {
-      enableFieldEl.onchange = (e) => {
-        window.state.enableField = e.target.checked;
-      };
-    }
-
-    const showFieldEl = document.getElementById('showField');
-    if (showFieldEl) {
-      showFieldEl.onchange = (e) => {
-        window.fieldFlowManager.fieldOverlay.visible = e.target.checked;
-      };
-    }
-
-    const clearFieldEl = document.getElementById('clearField');
-    if (clearFieldEl) {
-      clearFieldEl.onclick = () => {
-        window.fieldFlowManager.clearField();
-      };
-    }
-
-    const saveFieldEl = document.getElementById('saveField');
-    if (saveFieldEl) {
-      saveFieldEl.onclick = () => {
-        window.saveCanvasAsPNG(window.fieldFlowManager.fieldCanvas, 'field_intensity.png');
-      };
-    }
-
-    const fieldGainEl = document.getElementById('fieldGain');
-    if (fieldGainEl) {
-      fieldGainEl.oninput = (e) => {
-        window.state.fieldGain = parseInt(e.target.value) / 100;
-        document.getElementById('fieldGainValue').textContent = window.state.fieldGain.toFixed(2);
-      };
-    }
-
-    const enableFlowEl = document.getElementById('enableFlow');
-    if (enableFlowEl) {
-      enableFlowEl.onchange = (e) => {
-        window.state.enableFlow = e.target.checked;
-      };
-    }
-
-    const showFlowEl = document.getElementById('showFlow');
-    if (showFlowEl) {
-      showFlowEl.onchange = (e) => {
-        window.fieldFlowManager.flowOverlay.visible = e.target.checked;
-      };
-    }
-
-    const clearFlowEl = document.getElementById('clearFlow');
-    if (clearFlowEl) {
-      clearFlowEl.onclick = () => {
-        window.fieldFlowManager.clearFlow();
-      };
-    }
-
-    const saveFlowEl = document.getElementById('saveFlow');
-    if (saveFlowEl) {
-      saveFlowEl.onclick = () => {
-        window.saveCanvasAsPNG(window.fieldFlowManager.flowCanvas, 'flow_direction.png');
-      };
-    }
-
-    const flowAlphaEl = document.getElementById('flowAlpha');
-    if (flowAlphaEl) {
-      flowAlphaEl.oninput = (e) => {
-        window.state.flowAlpha = parseInt(e.target.value) / 100;
-        document.getElementById('flowAlphaValue').textContent = window.state.flowAlpha.toFixed(2);
-      };
-    }
-
-    const flowSimilarityEl = document.getElementById('flowSimilarity');
-    if (flowSimilarityEl) {
-      flowSimilarityEl.oninput = (e) => {
-        window.state.similarityThreshold = parseInt(e.target.value) / 100;
-        document.getElementById('flowSimilarityValue').textContent = window.state.similarityThreshold.toFixed(2);
-      };
-    }
-  }
 
   updateBodyVelocity() {
     const dynBody = window.bodyManager.getBody();
@@ -992,7 +929,7 @@ class UIManager {
 
 // ======= Animation Manager Class =======
 class AnimationManager {
-  constructor(scene, camera, renderer, bodyManager, pipManager, visualizationManager, stampingManager, fieldFlowManager) {
+  constructor(scene, camera, renderer, bodyManager, pipManager, visualizationManager, stampingManager) {
     this.scene = scene;
     this.camera = camera;
     this.renderer = renderer;
@@ -1000,17 +937,13 @@ class AnimationManager {
     this.pipManager = pipManager;
     this.visualizationManager = visualizationManager;
     this.stampingManager = stampingManager;
-    this.fieldFlowManager = fieldFlowManager;
-    
-    // Initialize UV paint system
-    this.uvPaintSystem = new UVPaintSystem(THREE);
-    
+
     this.frame = 0;
     this.lastT = performance.now();
     this.lastFrameTime = performance.now();
     this.lastStampTime = 0;
     this.tmpTr = new A.btTransform();
-    
+
     this.RESET_BOUNDARY = CFG.PLANE_SIZE / 2;
     this.RESET_Y_THRESHOLD = -5;
     
@@ -1020,13 +953,6 @@ class AnimationManager {
       avgContactPoint: { x: 0, y: 0, z: 0 },
       avgContactNormal: { x: 0, y: 1, z: 0 }
     };
-  }
-  
-  // Initialize UV paint system with ground mesh (called after scene setup)
-  initUVPaintSystem(groundMesh) {
-    if (this.uvPaintSystem && groundMesh) {
-      this.uvPaintSystem.init(groundMesh);
-    }
   }
 
   start() {
@@ -1208,19 +1134,38 @@ class AnimationManager {
     // Display filtered count for more accurate representation
     const displayCount = this.contactResult.filteredCount || 0;
     document.getElementById('contacts').textContent = String(displayCount);
+
+    // Update separate real/synthetic contact counts in UI
+    const realContactsEl = document.getElementById('realContacts');
+    const syntheticContactsEl = document.getElementById('syntheticContacts');
+
+    if (realContactsEl) {
+      realContactsEl.textContent = String(this.contactResult.realContactCount || 0);
+    }
+
+    if (syntheticContactsEl) {
+      syntheticContactsEl.textContent = String(this.contactResult.syntheticCount || 0);
+      // Style differently if synthetic contacts are present
+      if (this.contactResult.syntheticCount > 0) {
+        syntheticContactsEl.style.fontWeight = 'bold';
+      } else {
+        syntheticContactsEl.style.fontWeight = 'normal';
+      }
+    }
+
     if (displayCount > 0) {
       document.getElementById('gcenter').textContent =
         `(${this.contactResult.geometricCenter.x.toFixed(3)}, ${this.contactResult.geometricCenter.z.toFixed(3)})`;
     } else {
       document.getElementById('gcenter').textContent = '—';
     }
-    
+
     // Update velocity and force displays
     if (this.frame % 10 === 0 && dynBody && dynMesh) {
       this.updateVelocityDisplay(dynBody, dynMesh);
       this.updateAngularVelocityDisplay(dynBody, dynMesh);
     }
-    
+
     this.updateForceDisplay();
   }
 
@@ -1315,9 +1260,10 @@ class AnimationManager {
   }
 
   renderPiPAndStamp(now, dynBody, dynMesh) {
-    // Calculate camera rotation and velocity for PiP rendering
+    // Calculate camera rotation, velocity, and angular velocity for PiP rendering
     let cameraRotation = null;
     let velocity = null;
+    let angularVelocity = null;
     let normalForce = 20.0;
 
     if (dynBody && window.state.lastOBB) {
@@ -1325,14 +1271,14 @@ class AnimationManager {
         const nodes = dynBody.get_m_nodes();
         const nodeCount = nodes.size();
         let avgVx = 0, avgVz = 0;
-        
+
         for (let i = 0; i < nodeCount; i++) {
           const node = nodes.at(i);
           const nodeVel = node.get_m_v();
           avgVx += nodeVel.x();
           avgVz += nodeVel.z();
         }
-        
+
         if (nodeCount > 0) {
           avgVx /= nodeCount;
           avgVz /= nodeCount;
@@ -1342,6 +1288,9 @@ class AnimationManager {
             cameraRotation = Math.atan2(-avgVz, avgVx);
           }
         }
+
+        // Soft bodies don't have rigid angular velocity
+        angularVelocity = { x: 0, y: 0, z: 0 };
       } else {
         const lv = dynBody.getLinearVelocity();
         velocity = { x: lv.x(), z: lv.z() };
@@ -1350,6 +1299,11 @@ class AnimationManager {
           cameraRotation = Math.atan2(-lv.z(), lv.x());
         }
         A.destroy(lv);
+
+        // Get angular velocity for rigid bodies
+        const av = dynBody.getAngularVelocity();
+        angularVelocity = { x: av.x(), y: av.y(), z: av.z() };
+        A.destroy(av);
       }
 
       // Calculate normal force
@@ -1362,7 +1316,7 @@ class AnimationManager {
           verticalVelocity = lv.y();
           A.destroy(lv);
         }
-        
+
         const mass = this.bodyManager.mass || 2;
         const weight = mass * window.state.gravity;
         const impactFactor = Math.max(0, -verticalVelocity * 2);
@@ -1378,12 +1332,10 @@ class AnimationManager {
       window.state.paddingHeightScale,
       window.state.paddingDepthTopScale,
       window.state.paddingDepthBottomScale,
-      null,
       cameraRotation,
-      window.state.showPiP4,
       velocity,
-      normalForce,
-      window.state.lineIntensityScale
+      angularVelocity,
+      normalForce
     );
     
     // Handle stamping
@@ -1424,9 +1376,6 @@ class AnimationManager {
       // Require at least 2 contact points for soft bodies to ensure reasonable ground contact
       if (groundContactPoints < 2) {
         hasGroundContact = false;
-        console.log(`Soft body ground contact rejected: only ${groundContactPoints} contact points (need ≥2)`);
-      } else {
-        console.log(`Soft body ground contact confirmed: ${groundContactPoints} contact points`);
       }
     } else {
       // For rigid bodies, check position and contact manifolds
@@ -1479,12 +1428,6 @@ class AnimationManager {
             if (hasGroundContact) break;
           }
         }
-        
-        if (hasGroundContact) {
-          console.log(`Rigid body ground contact confirmed: ${groundContactPoints} contact points`);
-        } else {
-          console.log(`Rigid body ground contact rejected: body Y=${bodyLowestY.toFixed(2)}, contacts=${groundContactPoints}`);
-        }
       }
     }
     
@@ -1494,9 +1437,7 @@ class AnimationManager {
     );
     
     const finalResult = hasGroundContact && validContactSamples.length >= 1; // Need at least 1 valid ground contact
-    
-    console.log(`Ground collision validation: hasGroundContact=${hasGroundContact}, validContactSamples=${validContactSamples.length}, result=${finalResult}`);
-    
+
     return finalResult;
   }
 
@@ -1522,8 +1463,18 @@ class AnimationManager {
     // Choose stamp position
     let stampWorldX, stampWorldZ;
     if (window.state.useBBoxCenter) {
-      stampWorldX = window.state.lastOBB.center.x;
-      stampWorldZ = window.state.lastOBB.center.z;
+      if (this.dynMesh) {
+        // Calculate 3D bounding box center from mesh
+        const box = new window.THREE.Box3().setFromObject(this.dynMesh);
+        const center = new window.THREE.Vector3();
+        box.getCenter(center);
+        stampWorldX = center.x;
+        stampWorldZ = center.z;
+      } else {
+        // Fallback to OBB center if no mesh
+        stampWorldX = window.state.lastOBB.center.x;
+        stampWorldZ = window.state.lastOBB.center.z;
+      }
     } else {
       stampWorldX = this.contactResult.geometricCenter.x;
       stampWorldZ = this.contactResult.geometricCenter.z;
@@ -1553,103 +1504,90 @@ class AnimationManager {
     this.stampingManager.stampCtx.scale(1, -1);
     this.stampingManager.stampCtx.globalAlpha = 1.0;
     this.stampingManager.stampCtx.globalCompositeOperation = 'source-over';
-    
-    if (window.state.stampLineStencil && this.pipManager && this.pipManager.pip4) {
-      this.pipManager.pip4.forceUpdate(velocity, normalForce, window.state.lineIntensityScale);
-      const lineStencilCanvas = this.pipManager.pip4.getStencilCanvas();
-      if (lineStencilCanvas) {
-        this.stampingManager.stampCtx.drawImage(
-          lineStencilCanvas,
-          -stampSize / 2,
-          -stampSize / 2,
-          stampSize,
-          stampSize
-        );
-      }
-    }
-    
-    // UV Paint: Back stamp changes into ground UV texture
-    if (this.uvPaintSystem.isEnabled) {
-      // Use the current stamp canvas (intersection or line stencil) and paint it to ground UV
-      let stampCanvasToUse = intersectionCanvas;
-      
-      // If line stencil is enabled, use line stencil canvas instead
-      if (window.state.stampLineStencil && this.pipManager && this.pipManager.pip4) {
-        const lineStencilCanvas = this.pipManager.pip4.getStencilCanvas();
-        if (lineStencilCanvas) {
-          stampCanvasToUse = lineStencilCanvas;
-        }
-      }
-      
-      // Paint the stamp directly to ground UV texture
-      this.uvPaintSystem.paintStampToGroundUV(
-        stampCanvasToUse,
-        stampWorldX,
-        stampWorldZ,
-        stampSizeWorld,
-        CFG.PLANE_SIZE
-      );
-    }
-    
-    // Regular stamping continues normally
-    if (window.state.stampLineStencil && this.pipManager && this.pipManager.pip4) {
-      this.pipManager.pip4.forceUpdate(velocity, normalForce, window.state.lineIntensityScale);
-      const lineStencilCanvas = this.pipManager.pip4.getStencilCanvas();
-      if (lineStencilCanvas) {
-        this.stampingManager.stampCtx.drawImage(
-          lineStencilCanvas,
-          -stampSize / 2,
-          -stampSize / 2,
-          stampSize,
-          stampSize
-        );
-      }
-    } else {
-      this.stampingManager.stampCtx.drawImage(
-        intersectionCanvas,
-        -stampSize / 2,
-        -stampSize / 2,
-        stampSize,
-        stampSize
-      );
-    }
-    
+
+    this.stampingManager.stampCtx.drawImage(
+      intersectionCanvas,
+      -stampSize / 2,
+      -stampSize / 2,
+      stampSize,
+      stampSize
+    );
+
     this.stampingManager.stampCtx.restore();
     this.stampingManager.stampTexture.needsUpdate = true;
-    
-    // Debug: Log stamping details
-    console.log(`Stamp applied at (${stampWorldX.toFixed(2)}, ${stampWorldZ.toFixed(2)}) with size ${stampSizeWorld.toFixed(2)}`);
-    console.log(`Stamp overlay visible: ${this.stampingManager.stampOverlay.visible}, Show stamps state: ${window.state.showStamps}`);
-    
     // Ensure the stamp overlay is visible if Show Stamps is enabled
     if (window.state.showStamps && !this.stampingManager.stampOverlay.visible) {
-      console.warn('Show Stamps is enabled but overlay is not visible, fixing...');
       this.stampingManager.stampOverlay.visible = true;
     }
-    
-    // Accumulate field and flow
-    if (window.state.enableField) {
-      this.fieldFlowManager.accumulateField(stampWorldX, stampWorldZ, normalForce, window.state.fieldGain, 10);
-      this.fieldFlowManager.renderField(window.state.fieldGain);
-      
-      const normalForceEl = document.getElementById('normalForce');
-      if (normalForceEl) {
-        normalForceEl.textContent = normalForce.toFixed(1) + ' N';
+
+    // Flow accumulation - get pixels from pip1 and pip2
+    const pip1Canvas = document.getElementById('pip1Canvas');
+    const pip2Canvas = document.getElementById('pip2Canvas');
+    if (pip1Canvas && pip2Canvas && window.flowAccumulationManager) {
+      const pip1Ctx = pip1Canvas.getContext('2d');
+      const pip2Ctx = pip2Canvas.getContext('2d');
+      const pixels1 = pip1Ctx.getImageData(0, 0, CFG.PIP_W, CFG.PIP_H).data;
+      const pixels2 = pip2Ctx.getImageData(0, 0, CFG.PIP_W, CFG.PIP_H).data;
+
+      // Get velocity and angular velocity (already calculated earlier in renderPiPAndStamp)
+      const dynBody = this.bodyManager.getBody();
+      const dynMesh = this.bodyManager.getMesh();
+
+      let velocity = null;
+      let angularVelocity = null;
+
+      if (dynBody && window.state.lastOBB) {
+        if (dynMesh && dynMesh.userData.isSoftBody) {
+          const nodes = dynBody.get_m_nodes();
+          const nodeCount = nodes.size();
+          let avgVx = 0, avgVz = 0;
+          for (let i = 0; i < nodeCount; i++) {
+            const node = nodes.at(i);
+            const nodeVel = node.get_m_v();
+            avgVx += nodeVel.x();
+            avgVz += nodeVel.z();
+          }
+          if (nodeCount > 0) {
+            avgVx /= nodeCount;
+            avgVz /= nodeCount;
+            velocity = { x: avgVx, z: avgVz };
+          }
+          angularVelocity = { x: 0, y: 0, z: 0 };
+        } else {
+          const lv = dynBody.getLinearVelocity();
+          velocity = { x: lv.x(), z: lv.z() };
+          A.destroy(lv);
+          const av = dynBody.getAngularVelocity();
+          angularVelocity = { x: av.x(), y: av.y(), z: av.z() };
+          A.destroy(av);
+        }
       }
-    }
-    
-    if (window.state.enableFlow && velocity) {
-      const velocityMag = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-      if (velocityMag > 0.01) {
-        this.fieldFlowManager.accumulateFlow(stampWorldX, stampWorldZ, velocity.x, velocity.z, window.state.flowAlpha, window.state.similarityThreshold, 20);
-        this.fieldFlowManager.renderFlow();
+
+      // Accumulate flow
+      window.flowAccumulationManager.accumulate(
+        pixels1,
+        pixels2,
+        velocity,
+        angularVelocity,
+        normalForce,
+        window.state.lastOBB,
+        stampWorldX,
+        stampWorldZ
+      );
+
+      // Render flow to ground canvas
+      window.flowAccumulationManager.render();
+
+      // Update visibility
+      if (window.state.showFlowOverlay && !window.flowAccumulationManager.flowOverlay.visible) {
+        window.flowAccumulationManager.flowOverlay.visible = true;
       }
     }
   }
 }
 
 // ======= Global Variables =======
-let sceneManager, physicsManager, groundManager, visualizationManager, stampingManager, fieldFlowManager;
+let sceneManager, physicsManager, groundManager, visualizationManager, stampingManager, flowAccumulationManager;
 let bodyManager, pipManager, uiManager, animationManager;
 
 // ======= State Object =======
@@ -1660,18 +1598,11 @@ const state = {
   showGeomCenter: false,
   showWallObstacle: false,
   showStamps: false,
-  showPiP4: true,
   pipEnabled: true,
   enableStamping: true,
-  stampLineStencil: true,
   useBBoxCenter: false,
-  useCustomPattern: false,
-  enableField: true,
-  enableFlow: true,
-  
-  // UV Paint system state
-  enableUVPaint: false,
-  
+  enableSynthetic: true,
+
   paddingWidthScale: 1.0,
   paddingHeightScale: 1.0,
   paddingDepthTopScale: 0.1,
@@ -1681,13 +1612,9 @@ const state = {
   timestepHz: 60,
   maxSubsteps: 10,
   fixedTimestep: 120,
-  
+
   stampInterval: 280,
-  lineIntensityScale: 1.0,
-  fieldGain: 1.0,
-  flowAlpha: 0.8,
-  similarityThreshold: 0.5,
-  
+
   bboxAlgorithm: 'aabb',
   lastOBB: null,
   contactSamples: [],
@@ -1721,16 +1648,16 @@ async function init() {
   };
   sceneData.scene.add(visualizationManager.contactPointsGroup);
   sceneData.scene.add(visualizationManager.geomMeanMarker);
-  
+
   stampingManager = new StampingManager(sceneData.scene, CFG);
-  fieldFlowManager = new FieldFlowManager(sceneData.scene, CFG);
-  
+  flowAccumulationManager = new FlowAccumulationManager(sceneData.scene, CFG, THREE);
+
   // Initialize ground and obstacles
   const groundData = groundManager.init();
-  
+
   // Initialize other systems
   const stampingData = stampingManager.init();
-  const fieldFlowData = fieldFlowManager.init();
+  const flowAccumulationData = flowAccumulationManager.init();
   
   // Initialize core managers
   const loader = new GLTFLoader();
@@ -1739,18 +1666,14 @@ async function init() {
   pipManager = new PiPManager(CFG, THREE, sceneData.renderer, sceneData.scene);
   uiManager = new UIManager();
   animationManager = new AnimationManager(
-    sceneData.scene, 
-    sceneData.camera, 
-    sceneData.renderer, 
-    bodyManager, 
-    pipManager, 
-    visualizationManager, 
-    stampingManager, 
-    fieldFlowManager
+    sceneData.scene,
+    sceneData.camera,
+    sceneData.renderer,
+    bodyManager,
+    pipManager,
+    visualizationManager,
+    stampingManager
   );
-  
-  // Initialize UV paint system with ground mesh
-  animationManager.initUVPaintSystem(sceneManager.ground);
   
   // Make everything globally accessible FIRST
   window.A = physicsData.A;
@@ -1765,7 +1688,7 @@ async function init() {
   window.groundManager = groundManager;
   window.visualizationManager = visualizationManager;
   window.stampingManager = stampingManager;
-  window.fieldFlowManager = fieldFlowManager;
+  window.flowAccumulationManager = flowAccumulationManager;
   window.world = physicsData.world;
   window.dispatcher = physicsData.dispatcher;
   window.scene = sceneData.scene;
@@ -1792,4 +1715,4 @@ async function init() {
 }
 
 // ======= Start Application =======
-init().catch(console.error);
+init().catch(err => {});

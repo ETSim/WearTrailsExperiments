@@ -141,36 +141,14 @@ export class StampingManager {
     this.stampCtx.globalAlpha = 1.0;
     this.stampCtx.globalCompositeOperation = 'source-over';
 
-    // Draw either line stencil or complete intersection based on checkbox
-    if (this.stampLineStencil && pipManager && pipManager.pip4) {
-      // Get OBB angle for stencil rotation
-      const obbAngle = lastOBB && lastOBB.theta !== undefined ? lastOBB.theta : null;
-
-      // Force update the stencil with current parameters, velocity, normal force, OBB angle, and angular velocity before stamping
-      pipManager.pip4.forceUpdate(velocity, normalForce, this.lineIntensityScale, obbAngle, angularVelocity);
-
-      // Use line stencil from PiP4
-      const lineStencilCanvas = pipManager.pip4.getStencilCanvas();
-      if (lineStencilCanvas) {
-        // Draw with actual OBB dimensions (rectangular, not square)
-        this.stampCtx.drawImage(
-          lineStencilCanvas,
-          -stampWidth / 2,
-          -stampHeight / 2,
-          stampWidth,
-          stampHeight
-        );
-      }
-    } else {
-      // Use complete intersection (original behavior) with OBB dimensions
-      this.stampCtx.drawImage(
-        intersectionCanvas,
-        -stampWidth / 2,
-        -stampHeight / 2,
-        stampWidth,
-        stampHeight
-      );
-    }
+    // Use complete intersection with OBB dimensions
+    this.stampCtx.drawImage(
+      intersectionCanvas,
+      -stampWidth / 2,
+      -stampHeight / 2,
+      stampWidth,
+      stampHeight
+    );
 
     this.stampCtx.restore();
     this.stampTexture.needsUpdate = true;

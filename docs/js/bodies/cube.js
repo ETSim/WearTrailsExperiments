@@ -40,7 +40,7 @@ export function makeCube(THREE, A, scene, mass, friction, restitution, world, ge
   try {
     body.setRollingFriction(0.03); // Lower than sphere for easier rolling
   } catch (e) {
-    console.log('Rolling friction not supported in this Ammo.js build');
+    // Rolling friction not supported in this Ammo.js build
   }
   
   // Restitution (bounciness)
