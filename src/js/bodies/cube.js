@@ -4,15 +4,22 @@ export function makeCube(THREE, A, scene, mass, friction, restitution, world, ge
   const geom = new THREE.BoxGeometry(size, size, size, seg, seg, seg);
   
   // Generate new random texture for cube
-  const cubeTexture = new THREE.CanvasTexture(generateRandomCubeTexture(512));
+  const cubeTexture = new THREE.CanvasTexture(generateRandomCubeTexture(512, false));
   cubeTexture.wrapS = THREE.RepeatWrapping;
   cubeTexture.wrapT = THREE.RepeatWrapping;
   
+  // Generate normal map for sandpaper surface detail
+  const cubeNormalMap = new THREE.CanvasTexture(generateRandomCubeTexture(512, true));
+  cubeNormalMap.wrapS = THREE.RepeatWrapping;
+  cubeNormalMap.wrapT = THREE.RepeatWrapping;
+  
   const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({
     map: cubeTexture,
+    normalMap: cubeNormalMap,
+    normalScale: new THREE.Vector2(0.5, 0.5), // Adjust normal intensity
     color: 0xffffff, 
     metalness: 0.2, 
-    roughness: 0.5,
+    roughness: 0.8, // Increased roughness for sandpaper effect
     side: THREE.FrontSide
   }));
   scene.add(mesh);
@@ -33,7 +40,7 @@ export function makeCube(THREE, A, scene, mass, friction, restitution, world, ge
   try {
     body.setRollingFriction(0.03); // Lower than sphere for easier rolling
   } catch (e) {
-    console.log('Rolling friction not supported in this Ammo.js build');
+    // Rolling friction not supported in this Ammo.js build
   }
   
   // Restitution (bounciness)
@@ -51,5 +58,5 @@ export function makeCube(THREE, A, scene, mass, friction, restitution, world, ge
   
   world.addRigidBody(body);
   
-  return { mesh, body, texture: cubeTexture };
+  return { mesh, body, texture: cubeTexture, normalMap: cubeNormalMap };
 }

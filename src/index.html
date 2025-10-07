@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wear Simulation - Physics-Based Surface Wear Analysis</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="loadingScreen">
+    <div class="spinner"></div>
+    <div>Loading...</div>
+  </div>
+
+  <div id="hud" style="display:none;">
+    <div class="panel" id="controls">
+      <div class="section-title purple">Contact Analysis Controls</div>
+      
+      <!-- Statistics Section -->
+      <div class="section">
+        <div class="section-title purple collapsible" data-target="statsDetails">
+          <span class="toggle-icon">▼</span> Statistics
+        </div>
+        <div id="statsDetails" class="section-details">
+          <div><span class="pill cyan">Step Counter</span> <span id="stepCounter">0</span></div>
+          <div><span class="pill">Frame</span> <span id="frame">0</span></div>
+          <div><span class="pill">Contacts</span> <span id="contacts">0</span></div>
+          <div style="padding-left: 10px;">
+            <span class="pill" style="background: #dc2626;">Real</span> <span id="realContacts">0</span>
+            <span class="pill" style="background: #ea580c; margin-left: 8px;">Synthetic</span> <span id="syntheticContacts">0</span>
+          </div>
+          <div><span class="pill">OBB Angle</span> <span id="obbAng">—</span></div>
+          <div><span class="pill">Geom Center</span> <span id="gcenter">—</span></div>
+          <div><span class="pill">Box Type</span> <span id="bboxType">OMBB</span></div>
+          <div><span class="pill">Velocity</span> <span id="velocity">—</span></div>
+          <div><span class="pill">Angular Vel</span> <span id="angularVel">—</span></div>
+          <div><span class="pill">Applied Force</span> <span id="appliedForce">0 N</span></div>
+          <div><span class="pill">FPS</span> <span id="fps">0</span></div>
+        </div>
+      </div>
+      
+      <!-- Simulation Controls Section -->
+      <div class="section">
+        <div class="section-title green collapsible" data-target="simulationControlsDetails">
+          <span class="toggle-icon">▼</span> Simulation Controls
+        </div>
+        <div id="simulationControlsDetails" class="section-details">
+        <div class="row">
+          <button id="start">Start</button>
+          <button id="reset">Reset</button>
+          <button id="pause">Pause</button>
+        </div>
+
+        <div class="row">
+          <button id="stepFrame" style="width: 100%; background: #8b5cf6;">Step Frame</button>
+        </div>
+
+        <div class="row">
+          <span class="label">Algorithm</span>
+          <select id="bboxAlgo">
+            <option value="aabb" selected>AABB (Axis-Aligned)</option>
+            <option value="obb">OBB (PCA-based)</option>
+            <option value="ombb">OMBB (Rotating Calipers)</option>
+            <option value="kdop8">KDOP-8 → OBB</option>
+          </select>
+        </div>
+
+        <div class="row">
+          <label><input type="checkbox" id="showWallObstacle" /> Wall Obstacle</label>
+        </div>
+        </div>
+      </div>
+      
+      
+      <!-- Physics & Simulation Section -->
+      <div class="section">
+        <div class="section-title red collapsible" data-target="physicsSimulationDetails">
+          <span class="toggle-icon">▼</span> Physics & Simulation
+        </div>
+        <div id="physicsSimulationDetails" class="section-details">
+
+        <!-- Padding Controls Subsection -->
+        <div class="subsection">
+          <div class="subsection-title collapsible" data-target="paddingControlsDetails">
+            <span class="toggle-icon">▶</span> Padding Controls
+          </div>
+          <div id="paddingControlsDetails" class="subsection-details" style="display: none;">
+            <div class="row">
+              <span class="label">Padding Width</span>
+              <input id="paddingWidth" type="range" min="50" max="400" value="100" step="10" />
+              <span id="paddingWidthVal" class="pill">1.00x</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Padding Height</span>
+              <input id="paddingHeight" type="range" min="50" max="400" value="100" step="10" />
+              <span id="paddingHeightVal" class="pill">1.00x</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Padding Depth Top</span>
+              <input id="paddingDepthTop" type="range" min="1" max="500" value="10" step="1" />
+              <span id="paddingDepthTopVal" class="pill">0.10x</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Padding Depth Bottom</span>
+              <input id="paddingDepthBottom" type="range" min="1" max="500" value="10" step="1" />
+              <span id="paddingDepthBottomVal" class="pill">0.10x</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Speed Controls Subsection -->
+        <div class="subsection">
+          <div class="subsection-title collapsible" data-target="speedControlsDetails">
+            <span class="toggle-icon">▶</span> Speed Controls
+          </div>
+          <div id="speedControlsDetails" class="subsection-details" style="display: none;">
+            <div class="row">
+              <span class="label">Speed X</span>
+              <input id="speedX" type="range" min="-60" max="60" value="1" step="1" />
+              <span id="speedXVal" class="pill">1</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Speed Z</span>
+              <input id="speedZ" type="range" min="-60" max="60" value="0" step="1" />
+              <span id="speedZVal" class="pill">0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Force Controls Subsection -->
+        <div class="subsection">
+          <div class="subsection-title collapsible" data-target="forceControlsDetails">
+            <span class="toggle-icon">▶</span> Force Controls
+          </div>
+          <div id="forceControlsDetails" class="subsection-details" style="display: none;">
+            <div class="row">
+              <span class="label">Force X</span>
+              <input id="forceX" type="range" min="-2000" max="2000" value="0" step="10" />
+              <span id="forceXVal" class="pill">0</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Force Y</span>
+              <input id="forceY" type="range" min="-2000" max="2000" value="0" step="10" />
+              <span id="forceYVal" class="pill">0</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Force Z</span>
+              <input id="forceZ" type="range" min="-2000" max="2000" value="0" step="10" />
+              <span id="forceZVal" class="pill">0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Physics Parameters Subsection -->
+        <div class="subsection">
+          <div class="subsection-title collapsible" data-target="physicsParametersDetails">
+            <span class="toggle-icon">▶</span> Physics Parameters
+          </div>
+          <div id="physicsParametersDetails" class="subsection-details" style="display: none;">
+            <div class="row">
+              <span class="label">Gravity</span>
+              <input id="gravity" type="range" min="981" max="20000" value="981" step="1" />
+              <span id="gravityVal" class="pill">9.81</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Friction</span>
+              <input id="friction" type="range" min="0" max="2.0" value="0" step="0.01" />
+              <span id="frictionVal" class="pill">0.00</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Restitution</span>
+              <input id="restitution" type="range" min="0" max="1.0" value="0.6" step="0.01" />
+              <span id="restitutionVal" class="pill">0.60</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Linear Damping</span>
+              <input id="linearDamping" type="range" min="0" max="100" value="1" step="1" />
+              <span id="linearDampingVal" class="pill">0.01</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Angular Damping</span>
+              <input id="angularDamping" type="range" min="0" max="100" value="3" step="1" />
+              <span id="angularDampingVal" class="pill">0.03</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Timestep (Hz)</span>
+              <input id="timestep" type="range" min="30" max="480" value="60" step="10" />
+              <span id="timestepVal" class="pill">60 Hz</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Max Substeps</span>
+              <input id="maxSubsteps" type="range" min="1" max="50" value="10" step="1" />
+              <span id="maxSubstepsVal" class="pill">10</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Fixed Timestep (Hz)</span>
+              <input id="fixedTimestep" type="range" min="60" max="480" value="120" step="10" />
+              <span id="fixedTimestepVal" class="pill">120 Hz</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Sub-stepping</span>
+              <input id="subStepping" type="range" min="1" max="20" value="1" step="1" />
+              <span id="subSteppingVal" class="pill">1</span>
+            </div>
+          </div>
+        </div>
+
+        </div>
+      </div>
+      
+      <!-- Body Configuration Section -->
+      <div class="section">
+        <div class="section-title blue collapsible" data-target="bodyConfigDetails">
+          <span class="toggle-icon">▼</span> Body Configuration
+        </div>
+        <div id="bodyConfigDetails" class="section-details">
+        <div class="row">
+          <span class="label">Body</span>
+          <select id="shape">
+            <option value="cube10" selected>Cube (subdiv 10)</option>
+            <option value="cubeSoft">Cube Soft (Volume)</option>
+            <option value="sphere">Sphere</option>
+            <option value="puck">Puck (torus)</option>
+            <option value="cone">Cone</option>
+            <option value="custom">Custom GLB</option>
+          </select>
+        </div>
+        
+        <div class="row" id="customBodyRow" style="display:none;">
+          <span class="label">Body GLB</span>
+          <input id="bodyFile" type="file" accept=".glb,.gltf" />
+        </div>
+
+        <div class="row" id="variantRow" style="display:none;">
+          <span class="label">Material Variant</span>
+          <select id="variantSelect">
+            <option value="-1">No variants available</option>
+          </select>
+          <span id="variantCount" class="pill cyan">0</span>
+        </div>
+        
+        <div class="row">
+          <span class="label">Mass</span>
+          <input id="mass" type="range" min="0.1" max="1000" step="0.1" value="2" />
+          <span id="massValue" class="pill">2.0 kg</span>
+        </div>
+        
+        </div>
+      </div>
+      
+      <!-- Soft Body Parameters Section -->
+      <div class="section" id="softBodySection" style="display:none;">
+        <div class="section-title purple">Soft Body Parameters</div>
+        <div class="row">
+          <span class="label">Stiffness</span>
+          <input id="softStiffness" type="range" min="1" max="100" value="5" step="1" />
+          <span id="softStiffnessVal" class="pill">0.05</span>
+        </div>
+        
+        <div class="row">
+          <span class="label">Damping</span>
+          <input id="softDamping" type="range" min="0" max="50" value="1" step="1" />
+          <span id="softDampingVal" class="pill">0.01</span>
+        </div>
+        
+        <div class="row">
+          <span class="label">Pressure</span>
+          <input id="softPressure" type="range" min="0" max="500" value="0" step="10" />
+          <span id="softPressureVal" class="pill">0.00</span>
+        </div>
+        
+        <div class="row">
+          <span class="label">Solver Iterations</span>
+          <input id="softIterations" type="range" min="10" max="100" value="40" step="5" />
+          <span id="softIterationsVal" class="pill">40</span>
+        </div>
+        
+        <div class="row">
+          <span class="label">Contact Hardness</span>
+          <input id="softContactHardness" type="range" min="0" max="100" value="100" step="5" />
+          <span id="softContactHardnessVal" class="pill">1.00</span>
+        </div>
+        
+        <div class="row">
+          <span class="label">Ground Threshold</span>
+          <input id="softGroundThreshold" type="range" min="5" max="50" value="15" step="1" />
+          <span id="softGroundThresholdVal" class="pill">0.15</span>
+        </div>
+        
+        <div class="row">
+          <p style="font-size: 10px; color: #999; margin: 0;">Higher subdivision = more contacts (9×9×9 = 729 nodes)</p>
+        </div>
+      </div>
+      
+      <!-- Visualization Toggles Section -->
+      <div class="section">
+        <div class="section-title yellow collapsible" data-target="visualizationDetails">
+          <span class="toggle-icon">▼</span> Visualization
+        </div>
+        <div id="visualizationDetails" class="section-details">
+        <div class="row">
+          <label><input type="checkbox" id="pipEnabled" checked /> PiP Views</label>
+          <label><input type="checkbox" id="showOBB" /> Show 3D Box</label>
+        </div>
+
+        <div class="row">
+          <label><input type="checkbox" id="showContacts" /> Contact Points</label>
+          <label><input type="checkbox" id="showGeomCenter" /> Geometric Center</label>
+        </div>
+
+        <div class="row">
+          <label><input type="checkbox" id="enableSynthetic" checked /> Enable Synthetic Augmentation</label>
+        </div>
+        </div>
+      </div>
+      
+      <!-- Ground Stamping -->
+      <div class="section">
+        <div class="section-title orange collapsible" data-target="groundStampingDetails">
+          <span class="toggle-icon">▼</span> Ground Stamping
+        </div>
+        <div id="groundStampingDetails" class="section-details">
+        <div class="row">
+          <label><input type="checkbox" id="enableStamping" checked /> Enable Stamping</label>
+          <label><input type="checkbox" id="showStamps" /> Show Stamps</label>
+        </div>
+        
+        <div class="row">
+          <label><input type="checkbox" id="useBBoxCenter" /> Use BBox Center</label>
+        </div>
+        <div class="row">
+          <span class="label">Stamp Interval</span>
+          <input id="stampInterval" type="range" min="1" max="500" value="50" step="1" />
+          <span id="stampIntervalVal" class="pill">50 ms</span>
+        </div>
+        
+        <div class="row">
+          <button id="clearStamps" class="save-btn">Clear Stamps</button>
+          <button id="saveStamps" class="save-btn">Save Stamps</button>
+        </div>
+        </div>
+      </div>
+
+      <!-- Wear Simulation -->
+      <div class="section">
+        <div class="section-title cyan collapsible" data-target="wearSimulationDetails">
+          <span class="toggle-icon">▼</span> Wear Simulation
+        </div>
+        <div id="wearSimulationDetails" class="section-details">
+        <div class="row">
+          <label><input type="checkbox" id="useEnergyModel" /> Energy-Based Wear Model</label>
+        </div>
+
+        <div class="row">
+          <span class="label">Wear Intensity</span>
+          <input id="wearIntensity" type="range" min="1" max="100" value="15" step="1" />
+          <span id="wearIntensityVal" class="pill">0.15</span>
+        </div>
+
+        <div class="row" id="energyModelInfo" style="display:none;">
+          <span class="label" style="font-size: 11px; color: #6b7280; min-width: 100%;">
+            Energy model uses friction coefficient from Physics Parameters
+          </span>
+        </div>
+
+        <div class="row" id="energyModelParams1" style="display:none;">
+          <span class="label">Hardness (GPa)</span>
+          <input id="hardness" type="range" min="0.1" max="10" value="1" step="0.1" />
+          <span id="hardnessVal" class="pill">1.0 GPa</span>
+        </div>
+
+        <div class="row" id="energyModelParams2" style="display:none;">
+          <span class="label">Wear Coeff (K_E)</span>
+          <input id="wearCoeff" type="range" min="0.0001" max="0.01" value="0.001" step="0.0001" />
+          <span id="wearCoeffVal" class="pill">0.0010</span>
+        </div>
+
+        <div class="row">
+          <button id="clearFlow" class="save-btn">Clear Wear Data</button>
+          <button id="saveFlow" class="save-btn">Export Wear Map</button>
+        </div>
+        <div class="row">
+          <label><input type="checkbox" id="showFlowOverlay" checked /> Show Wear Overlay</label>
+        </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <div class="pip-container scrollable" id="pipContainer">
+    <div id="pip1" class="pip">
+      <div class="pip-label">Top View (+n)</div>
+      <canvas id="pip1Canvas" width="256" height="256"></canvas>
+    </div>
+    <div id="pip2" class="pip">
+      <div class="pip-label">Bottom View (-n)</div>
+      <canvas id="pip2Canvas" width="256" height="256"></canvas>
+    </div>
+    <div id="pip3" class="pip">
+      <div class="pip-label">Intersection</div>
+      <canvas id="pip3Canvas" width="256" height="256"></canvas>
+    </div>
+    <div id="pip4" class="pip">
+      <div class="pip-label">Tangential Velocity</div>
+      <canvas id="pip4Canvas" width="256" height="256"></canvas>
+    </div>
+    <div id="pip5" class="pip">
+      <div class="pip-label">Pressure Map</div>
+      <canvas id="pip5Canvas" width="256" height="256"></canvas>
+    </div>
+    <div id="pip6" class="pip">
+      <div class="pip-label">Wear Intensity</div>
+      <canvas id="pip6Canvas" width="256" height="256"></canvas>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/gh/kripken/ammo.js@HEAD/builds/ammo.js"></script>
+  <script type="importmap">
+  {"imports":{
+    "three":"https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
+    "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"
+  }}
+  </script>
+  <script type="module" src="js/main-clean-complete.js"></script>
+</body>
+</html>

@@ -5,13 +5,18 @@ export function makePuck(THREE, A, scene, mass, friction, restitution, world, ma
   geom.rotateX(Math.PI/2);
   
   // Generate texture for puck
-  const puckTexture = new THREE.CanvasTexture(generateRandomCubeTexture(512));
+  const puckTexture = new THREE.CanvasTexture(generateRandomCubeTexture(512, false));
+  
+  // Generate normal map for surface detail
+  const puckNormalMap = new THREE.CanvasTexture(generateRandomCubeTexture(512, true));
   
   const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({
     map: puckTexture,
+    normalMap: puckNormalMap,
+    normalScale: new THREE.Vector2(0.5, 0.5),
     color: 0xffffff, 
     metalness: 0.3, 
-    roughness: 0.4,
+    roughness: 0.8,
     side: THREE.FrontSide
   }));
   scene.add(mesh);
@@ -35,5 +40,5 @@ export function makePuck(THREE, A, scene, mass, friction, restitution, world, ma
   
   world.addRigidBody(body);
   
-  return { mesh, body };
+  return { mesh, body, texture: puckTexture, normalMap: puckNormalMap };
 }

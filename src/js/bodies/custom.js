@@ -6,13 +6,13 @@ export async function makeCustomBody(THREE, A, scene, mass, friction, restitutio
     let srcMesh = null;
     gltf.scene.traverse(o => { if (o.isMesh && !srcMesh) srcMesh = o; });
     if (!srcMesh) throw new Error('No mesh found in GLB');
-    
+
     const mesh = srcMesh.clone();
     const bbox = new THREE.Box3().setFromObject(mesh);
     const size = bbox.getSize(new THREE.Vector3());
     const scale = 2.5 / Math.max(size.x, size.y, size.z);
     mesh.scale.setScalar(scale);
-    
+
     if (srcMesh.material) {
       mesh.material = srcMesh.material.clone();
       mesh.material.needsUpdate = true;
@@ -20,14 +20,32 @@ export async function makeCustomBody(THREE, A, scene, mass, friction, restitutio
       if (mesh.material.metalness !== undefined) mesh.material.metalness = 0.3;
       if (mesh.material.roughness !== undefined) mesh.material.roughness = 0.5;
     } else {
-      mesh.material = new THREE.MeshStandardMaterial({ 
-        color: 0xff9900, 
-        metalness: 0.3, 
+      mesh.material = new THREE.MeshStandardMaterial({
+        color: 0xff9900,
+        metalness: 0.3,
         roughness: 0.5,
         side: THREE.FrontSide
       });
     }
-    
+
+    // Extract KHR_materials_variants if available
+    let variantInfo = null;
+    const khrExt = gltf.userData?.gltfExtensions?.['KHR_materials_variants'];
+    const meshExt = srcMesh.userData?.gltfExtensions?.['KHR_materials_variants'];
+
+    if (khrExt && khrExt.variants && meshExt && meshExt.mappings) {
+      const variantNames = khrExt.variants.map(v => v.name);
+      const mappings = meshExt.mappings;
+
+      variantInfo = {
+        names: variantNames,
+        mappings: mappings,
+        parser: gltf.parser,
+        originalMesh: srcMesh,
+        currentVariantIndex: 0
+      };
+    }
+
     scene.add(mesh);
     const shape = makeConvexTriangleMeshShapeFromGeometry(mesh.geometry, A);
     const tr = new A.btTransform();
@@ -42,14 +60,13 @@ export async function makeCustomBody(THREE, A, scene, mass, friction, restitutio
     body.setDamping(0.01, 0.01);
     body.setCcdSweptSphereRadius(0.3);
     body.setCcdMotionThreshold(0.002);
-    
+
     // Disable deactivation to prevent body from sleeping
     body.setActivationState(4); // DISABLE_DEACTIVATION
-    
+
     world.addRigidBody(body);
-    return { mesh, body };
+    return { mesh, body, variantInfo };
   } catch(e) {
-    console.error('Failed to load custom body:', e);
     return null;
   }
 }

@@ -4,13 +4,18 @@ export function makeSphere(THREE, A, scene, mass, friction, restitution, world, 
   const geom = new THREE.SphereGeometry(radius, widthSegments, heightSegments);
   
   // Generate texture for sphere
-  const sphereTexture = new THREE.CanvasTexture(generateRandomCubeTexture(512));
+  const sphereTexture = new THREE.CanvasTexture(generateRandomCubeTexture(512, false));
+  
+  // Generate normal map for surface detail
+  const sphereNormalMap = new THREE.CanvasTexture(generateRandomCubeTexture(512, true));
   
   const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({
     map: sphereTexture,
+    normalMap: sphereNormalMap,
+    normalScale: new THREE.Vector2(0.5, 0.5),
     color: 0xffffff, 
     metalness: 0.2, 
-    roughness: 0.5,
+    roughness: 0.8,
     side: THREE.FrontSide
   }));
   scene.add(mesh);
@@ -32,7 +37,7 @@ export function makeSphere(THREE, A, scene, mass, friction, restitution, world, 
   try {
     body.setRollingFriction(0.05); // Small rolling resistance for realistic rolling
   } catch (e) {
-    console.log('Rolling friction not supported in this Ammo.js build');
+    // Rolling friction not supported in this Ammo.js build
   }
   
   // Restitution (bounciness)
@@ -50,6 +55,6 @@ export function makeSphere(THREE, A, scene, mass, friction, restitution, world, 
   
   world.addRigidBody(body);
   
-  return { mesh, body };
+  return { mesh, body, texture: sphereTexture, normalMap: sphereNormalMap };
 }
 

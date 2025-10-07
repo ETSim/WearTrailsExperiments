@@ -5,7 +5,7 @@ export class PiP1 {
     this.pipRenderer = pipRenderer;
     this.camera = pipRenderer.createOrthographicCamera();
     this.renderTarget = pipRenderer.createRenderTarget();
-    this.canvasCtx = document.getElementById('pip1Canvas').getContext('2d');
+    this.canvasCtx = document.getElementById('pip1Canvas').getContext('2d', { willReadFrequently: true });
   }
   
   update(lastOBB, paddingWidthScale, paddingHeightScale, paddingDepthTopScale, rotationAngle = null) {
@@ -25,9 +25,10 @@ export class PiP1 {
       e1 = new this.pipRenderer.THREE.Vector3(lastOBB.e1.x, lastOBB.e1.y, lastOBB.e1.z).normalize();
     }
     
-    const w = Math.max(0.1, lastOBB.width) * paddingWidthScale;
-    const h = Math.max(0.1, lastOBB.height) * paddingHeightScale;
-    const d = this.pipRenderer.CFG.OBB_DEPTH * paddingDepthTopScale;
+    // Ensure minimum reasonable dimensions for the orthographic view
+    const w = Math.max(0.5, lastOBB.width) * paddingWidthScale;
+    const h = Math.max(0.5, lastOBB.height) * paddingHeightScale;
+    const d = Math.max(1.0, this.pipRenderer.CFG.OBB_DEPTH * paddingDepthTopScale);
     
     this.pipRenderer.updateCamera(this.camera, center, n, e1, w, h, d, 1);
   }

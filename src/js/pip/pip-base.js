@@ -41,15 +41,29 @@ export class PiPRenderer {
   }
   
   updateCamera(camera, center, n, e1, w, h, d, direction = 1) {
-    const pos = center.clone().addScaledVector(n, d * 0.5 * direction);
+    // Position camera exactly at the edge of the 3D bounding box based on padding
+    // The camera should be positioned at the surface of the padded bounding box
+    const cameraDistance = d * 0.5; // Position exactly at the box boundary
+    
+    const pos = center.clone().addScaledVector(n, cameraDistance * direction);
     camera.position.copy(pos);
     camera.up.copy(e1);
-    camera.left = -w * 0.65;
-    camera.right = w * 0.65;
-    camera.top = h * 0.65;
-    camera.bottom = -h * 0.65;
-    camera.near = 0.1;
-    camera.far = Math.max(d * 2, center.y + 10); // Extend far plane to include ground
+    
+    // Set orthographic bounds to exactly match the padded 3D bounding box
+    // No additional margins - the view should stop exactly at the box bounds
+    camera.left = -w * 0.5;
+    camera.right = w * 0.5;
+    camera.top = h * 0.5;
+    camera.bottom = -h * 0.5;
+    
+    // Calculate precise near and far planes based on the 3D box depth and padding
+    // Near plane: Just at the camera position (box surface)
+    camera.near = 0.01; // Very close to camera position
+    
+    // Far plane: Exactly at the opposite face of the 3D bounding box
+    // This ensures the view stops precisely at the padded box bounds
+    camera.far = d; // Full depth of the padded bounding box
+    
     camera.lookAt(center);
     camera.updateProjectionMatrix();
   }

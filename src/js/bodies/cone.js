@@ -4,13 +4,18 @@ export function makeCone(THREE, A, scene, mass, friction, restitution, world, ma
   const geom = new THREE.ConeGeometry(radius, height, radialSegments);
   
   // Generate texture for cone
-  const coneTexture = new THREE.CanvasTexture(generateRandomCubeTexture(512));
+  const coneTexture = new THREE.CanvasTexture(generateRandomCubeTexture(512, false));
+  
+  // Generate normal map for surface detail
+  const coneNormalMap = new THREE.CanvasTexture(generateRandomCubeTexture(512, true));
   
   const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({
     map: coneTexture,
+    normalMap: coneNormalMap,
+    normalScale: new THREE.Vector2(0.5, 0.5),
     color: 0xffffff, 
     metalness: 0.2, 
-    roughness: 0.5,
+    roughness: 0.8,
     side: THREE.FrontSide
   }));
   scene.add(mesh);
@@ -36,5 +41,5 @@ export function makeCone(THREE, A, scene, mass, friction, restitution, world, ma
   
   world.addRigidBody(body);
   
-  return { mesh, body };
+  return { mesh, body, texture: coneTexture, normalMap: coneNormalMap };
 }

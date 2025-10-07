@@ -29,7 +29,6 @@ export function makeCubeSoft(
   const tX = 0, tY = 0, tZ = 0; // Translation offset
 
   if (numPointsX < 2 || numPointsY < 2 || numPointsZ < 2) {
-    console.warn('Soft body requires at least 2 points per dimension');
     return;
   }
 
@@ -151,17 +150,23 @@ export function makeCubeSoft(
   bufferGeom.translate(tX, tY, tZ);
 
   // Create texture
-  const tex = new THREE.CanvasTexture(generateRandomCubeTexture(512));
+  const tex = new THREE.CanvasTexture(generateRandomCubeTexture(512, false));
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  
+  // Generate normal map for surface detail
+  const normalTex = new THREE.CanvasTexture(generateRandomCubeTexture(512, true));
+  normalTex.wrapS = normalTex.wrapT = THREE.RepeatWrapping;
 
   // Create mesh
   const mesh = new THREE.Mesh(
     bufferGeom,
     new THREE.MeshStandardMaterial({
       map: tex,
+      normalMap: normalTex,
+      normalScale: new THREE.Vector2(0.5, 0.5),
       color: 0xffffff,
       metalness: 0.1,
-      roughness: 0.7,
+      roughness: 0.8,
       side: THREE.DoubleSide,
       wireframe: false,
     })
@@ -280,7 +285,6 @@ export function makeCubeSoft(
   try {
     A.castObject(volumeSoftBody, A.btCollisionObject).getCollisionShape().setMargin(margin);
   } catch (e) {
-    console.warn('Could not set soft body margin:', e);
   }
 
   // Set restitution (bounciness)
@@ -299,7 +303,6 @@ export function makeCubeSoft(
     const ccdThreshold = 0.001;
     A.castObject(volumeSoftBody, A.btCollisionObject).setCcdMotionThreshold(ccdThreshold);
   } catch (e) {
-    console.warn('Could not set CCD for soft body:', e);
   }
 
   // Add to physics world
@@ -341,5 +344,5 @@ export function makeCubeSoft(
   mesh.userData.updateSoftBodyMesh = update;
   mesh.userData.initialPositions = initialPositions;
 
-  return { mesh, body: volumeSoftBody, isSoftBody: true, update };
+  return { mesh, body: volumeSoftBody, isSoftBody: true, update, texture: tex, normalMap: normalTex };
 }
