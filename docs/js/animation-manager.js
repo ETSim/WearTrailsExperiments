@@ -39,9 +39,9 @@ export class AnimationManager {
   animate() {
     requestAnimationFrame(() => this.animate());
     this.frame++;
-    
+
     const now = performance.now();
-    
+
     // Update FPS
     if (now - this.lastT > 500) {
       const fps = Math.round(1000 / (now - this.lastT) * this.frame);
@@ -50,14 +50,21 @@ export class AnimationManager {
       this.frame = 0;
     }
     document.getElementById('frame').textContent = String(this.frame);
-    
+
     // Get dynamic body reference
     const dynBody = this.bodyManager.getBody();
     const dynMesh = this.bodyManager.getMesh();
-    
-    // Skip physics if paused
-    if (!window.isPaused) {
+
+    // Handle single step mode
+    const shouldUpdatePhysics = !window.isPaused || window.singleStep;
+
+    if (shouldUpdatePhysics) {
       this.updatePhysics(now, dynBody, dynMesh);
+
+      // Reset single step flag after stepping
+      if (window.singleStep) {
+        window.singleStep = false;
+      }
     }
     
     // Sample contacts
@@ -103,7 +110,7 @@ export class AnimationManager {
   updateSoftBodyPhysics(dynBody, dynMesh, dt) {
     const nodes = dynBody.get_m_nodes();
     const nodeCount = nodes.size();
-    
+
     // Calculate current average velocity
     let avgVx = 0, avgVy = 0, avgVz = 0;
     for (let i = 0; i < nodeCount; i++) {
@@ -116,63 +123,83 @@ export class AnimationManager {
     avgVx /= nodeCount;
     avgVy /= nodeCount;
     avgVz /= nodeCount;
-    
+
     // Get target speeds
     const targetSpeedX = this.bodyManager.speedX;
     const targetSpeedZ = this.bodyManager.speedZ;
-    
+
     // Calculate velocity corrections needed
     const speedDiffX = targetSpeedX - avgVx;
     const speedDiffZ = targetSpeedZ - avgVz;
-    
-    // Apply forces to maintain constant speed
-    for (let i = 0; i < nodeCount; i++) {
-      const node = nodes.at(i);
-      const nodePos = node.get_m_x();
-      
-      // Apply speed correction forces
-      const forceX = speedDiffX * 1000; // Proportional gain
-      const forceZ = speedDiffZ * 1000;
-      
-      // Apply external forces
-      const totalForceX = forceX + window.forceX;
-      const totalForceY = window.forceY;
-      const totalForceZ = forceZ + window.forceZ;
-      
-      node.get_m_f().setX(totalForceX);
-      node.get_m_f().setY(totalForceY);
-      node.get_m_f().setZ(totalForceZ);
+
+    // Get external forces from window.state
+    const externalForceX = window.state.forceX || 0;
+    const externalForceY = window.state.forceY || 0;
+    const externalForceZ = window.state.forceZ || 0;
+
+    // Check if any forces need to be applied
+    const needsForce = Math.abs(speedDiffX) > 0.1 || Math.abs(speedDiffZ) > 0.1 ||
+                      Math.abs(externalForceX) > 0.1 || Math.abs(externalForceY) > 0.1 || Math.abs(externalForceZ) > 0.1;
+
+    if (needsForce) {
+      // Activate soft body to ensure forces are applied (wake from sleep)
+      dynBody.setActivationState(4); // DISABLE_DEACTIVATION
+
+      // Apply forces to each node (ADD forces, don't overwrite)
+      const forcePerNode = new A.btVector3(0, 0, 0);
+
+      for (let i = 0; i < nodeCount; i++) {
+        const node = nodes.at(i);
+
+        // Calculate total force for this node
+        const forceX = speedDiffX * 1000 + externalForceX; // Speed correction + external
+        const forceY = externalForceY;
+        const forceZ = speedDiffZ * 1000 + externalForceZ;
+
+        // Add force to node (preserves existing forces like gravity and internal soft body forces)
+        forcePerNode.setValue(forceX, forceY, forceZ);
+        dynBody.addForce(forcePerNode, i);
+      }
+
+      A.destroy(forcePerNode);
     }
   }
   
   updateRigidBodyPhysics(dynBody, dynMesh, dt) {
-    // Apply forces to rigid body
-    const totalForceX = window.forceX;
-    const totalForceY = window.forceY;
-    const totalForceZ = window.forceZ;
-    
-    if (Math.abs(totalForceX) > 0.1 || Math.abs(totalForceY) > 0.1 || Math.abs(totalForceZ) > 0.1) {
-      const force = new A.btVector3(totalForceX, totalForceY, totalForceZ);
+    // Get external forces from window.state
+    const externalForceX = window.state.forceX || 0;
+    const externalForceY = window.state.forceY || 0;
+    const externalForceZ = window.state.forceZ || 0;
+
+    // Apply external forces to rigid body
+    if (Math.abs(externalForceX) > 0.1 || Math.abs(externalForceY) > 0.1 || Math.abs(externalForceZ) > 0.1) {
+      // Activate body to ensure forces are applied (wake from sleep)
+      dynBody.activate(true);
+
+      const force = new A.btVector3(externalForceX, externalForceY, externalForceZ);
       dynBody.applyCentralForce(force);
       A.destroy(force);
     }
-    
+
     // Apply speed control for rigid bodies
     const lv = dynBody.getLinearVelocity();
     const currentSpeedX = lv.x();
     const currentSpeedZ = lv.z();
     const targetSpeedX = this.bodyManager.speedX;
     const targetSpeedZ = this.bodyManager.speedZ;
-    
+
     const speedDiffX = targetSpeedX - currentSpeedX;
     const speedDiffZ = targetSpeedZ - currentSpeedZ;
-    
+
     if (Math.abs(speedDiffX) > 0.1 || Math.abs(speedDiffZ) > 0.1) {
+      // Activate body to ensure speed control works
+      dynBody.activate(true);
+
       const speedForce = new A.btVector3(speedDiffX * 1000, 0, speedDiffZ * 1000);
       dynBody.applyCentralForce(speedForce);
       A.destroy(speedForce);
     }
-    
+
     A.destroy(lv);
   }
   

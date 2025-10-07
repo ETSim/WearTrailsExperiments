@@ -302,13 +302,23 @@ class FlowAccumulationManager {
     this.flowOverlay = null;
 
     // Accumulators
-    this.flowDirX = null;        // Average direction X (for visualization)
-    this.flowDirZ = null;        // Average direction Z (for visualization)
-    this.wearAccumulation = null; // Accumulated wear: velocity × force × intensity
+    this.flowDirX = null;              // Average direction X (for visualization)
+    this.flowDirZ = null;              // Average direction Z (for visualization)
+    this.wearAccumulation = null;      // Accumulated wear: velocity × force × intensity
+    this.energyWearAccumulation = null; // Energy-based wear: (K_E/H) × μ × p × v × dt
 
-    // Parameters
+    // Rendering parameters
+    this.maxWearThreshold = 0.01;      // Adaptive threshold for wear visualization (only increases)
+
+    // Parameters - Simple Model
     this.flowAlpha = 0.15;
     this.density = 1.0; // kg/m²
+
+    // Parameters - Energy-Based Model
+    // Note: Friction coefficient (μ) is taken from window.bodyManager.friction
+    this.hardness = 1e9;     // Material hardness (H) in Pa - default 1 GPa
+    this.K_E = 1e-3;         // Energy wear coefficient (dimensionless)
+    this.useEnergyModel = false; // Toggle between models
   }
 
   init() {
@@ -323,6 +333,7 @@ class FlowAccumulationManager {
     this.flowDirX = new Float32Array(size);
     this.flowDirZ = new Float32Array(size);
     this.wearAccumulation = new Float32Array(size);
+    this.energyWearAccumulation = new Float32Array(size);
 
     // Clear canvas
     this.flowCtx.clearRect(0, 0, 2048, 2048);
@@ -424,7 +435,29 @@ class FlowAccumulationManager {
     const paddedHeight = height * window.state.paddingHeightScale;
     const stampSizeWorld = Math.max(paddedWidth, paddedHeight);
 
-    // Process each pixel in intersection
+    // FIRST PASS: Count intersection pixels and calculate contact area
+    let intersectionPixelCount = 0;
+    for (let y = 0; y < H_pip; y++) {
+      for (let x = 0; x < W_pip; x++) {
+        const pipIdx = (y * W_pip + x) * 4;
+        const has1 = (pixels1[pipIdx] | pixels1[pipIdx+1] | pixels1[pipIdx+2]) > 10;
+        const has2 = (pixels2[pipIdx] | pixels2[pipIdx+1] | pixels2[pipIdx+2]) > 10;
+        if (has1 && has2) {
+          intersectionPixelCount++;
+        }
+      }
+    }
+
+    // Calculate contact area in world units
+    // Each pixel represents a portion of the OBB area
+    const pixelAreaWorld = (width * height) / (W_pip * H_pip);
+    const contactArea = intersectionPixelCount * pixelAreaWorld;
+
+    // Calculate pressure: P = F / A (force per unit area)
+    // Avoid division by zero
+    const pressure = contactArea > 0.001 ? normalForceValue / contactArea : 0;
+
+    // SECOND PASS: Process each pixel in intersection with accurate pressure
     for (let y = 0; y < H_pip; y++) {
       for (let x = 0; x < W_pip; x++) {
         const pipIdx = (y * W_pip + x) * 4;
@@ -469,9 +502,9 @@ class FlowAccumulationManager {
             z: v_3d.z - v_dot_n * normal.z
           };
 
-          // Calculate normal force component for this pixel
-          const v_normal_component = Math.max(0, v_dot_n);
-          const f_normal = 0.5 * this.density * v_normal_component * v_normal_component;
+          // Use accurate pressure from contact force distribution
+          // Pressure is already calculated as total normal force / contact area
+          // Each intersection pixel gets an equal share of the pressure
 
           // Calculate tangential velocity magnitude
           const velMag = Math.sqrt(
@@ -492,15 +525,46 @@ class FlowAccumulationManager {
               const normDirX = v_tangential.x / velMag;
               const normDirZ = v_tangential.z / velMag;
 
-              // Wear formula: Tangential Velocity × Normal Force × Intensity
-              // Both velocity AND force must be present for wear to occur (multiplicative)
-              const wearRate = velMag * f_normal * this.flowAlpha;
+              // Simple wear formula: Tangential Velocity × Pressure × Intensity
+              // Both velocity AND pressure must be present for wear to occur (multiplicative)
+              const wearRate = velMag * pressure * this.flowAlpha;
               this.wearAccumulation[canvasIdx] += wearRate;
 
-              // Track average direction using exponential moving average (for visualization)
-              const dirAlpha = 0.1; // Slower update for direction (smoothing)
-              this.flowDirX[canvasIdx] = this.flowDirX[canvasIdx] * (1 - dirAlpha) + normDirX * dirAlpha;
-              this.flowDirZ[canvasIdx] = this.flowDirZ[canvasIdx] * (1 - dirAlpha) + normDirZ * dirAlpha;
+              // Energy-based wear formula: dWear = (K_E / H) × μ × p × v × dt × intensity
+              // Uses friction coefficient from simulator physics
+              const mu = window.bodyManager ? window.bodyManager.friction : 0.3;
+
+              // Shear stress: τ = μ × p
+              const tau = mu * pressure;
+
+              // Frictional power: P = τ × v_tangential
+              const power = tau * velMag;
+
+              // Time step (convert stampInterval from ms to seconds)
+              const dt = window.state.stampInterval / 1000.0;
+
+              // Dissipated energy: dE = P × dt
+              const dE = power * dt;
+
+              // Energy-based wear: dWear = (K_E / H) × dE × intensity
+              // Apply flowAlpha for consistent accumulation rate with simple model
+              const energyWear = (this.K_E / this.hardness) * dE * this.flowAlpha;
+              this.energyWearAccumulation[canvasIdx] += energyWear;
+
+              // Track dominant direction (bidirectional - strongest wear direction wins)
+              // Only update direction if this wear contribution is significant
+              const currentDirMag = Math.sqrt(
+                this.flowDirX[canvasIdx] * this.flowDirX[canvasIdx] +
+                this.flowDirZ[canvasIdx] * this.flowDirZ[canvasIdx]
+              );
+
+              // Update direction if this is first contact OR if wear rate is significant
+              if (currentDirMag < 0.01 || wearRate > this.wearAccumulation[canvasIdx] * 0.05) {
+                // Blend direction weighted by wear contribution (bidirectional accumulation)
+                const blendFactor = wearRate / (this.wearAccumulation[canvasIdx] + wearRate);
+                this.flowDirX[canvasIdx] = this.flowDirX[canvasIdx] * (1 - blendFactor) + normDirX * blendFactor;
+                this.flowDirZ[canvasIdx] = this.flowDirZ[canvasIdx] * (1 - blendFactor) + normDirZ * blendFactor;
+              }
             }
           }
         }
@@ -509,65 +573,70 @@ class FlowAccumulationManager {
   }
 
   /**
-   * Render accumulated wear as heatmap (velocity × force × intensity)
+   * Render accumulated wear with HSV directional encoding
+   * Hue = wear direction, Saturation = full, Value = intensity (logarithmic scaling)
+   * Supports both simple and energy-based models
    */
   render() {
     const W = this.flowCanvas.width;
     const H = this.flowCanvas.height;
 
-    // Find max wear for normalization
-    let maxWear = 0.01;
-    for (let i = 0; i < this.wearAccumulation.length; i++) {
-      if (this.wearAccumulation[i] > maxWear) {
-        maxWear = this.wearAccumulation[i];
+    // Choose which accumulator to visualize
+    const wearData = this.useEnergyModel ?
+      this.energyWearAccumulation :
+      this.wearAccumulation;
+
+    // Update adaptive threshold (only increases, never decreases)
+    // This prevents existing pixels from dimming as new wear accumulates
+    let currentMaxWear = 0.01;
+    for (let i = 0; i < wearData.length; i++) {
+      if (wearData[i] > currentMaxWear) {
+        currentMaxWear = wearData[i];
       }
+    }
+
+    // Only increase threshold, never decrease (prevents dimming)
+    if (currentMaxWear > this.maxWearThreshold) {
+      this.maxWearThreshold = currentMaxWear;
     }
 
     // Create output image
     const outputData = this.flowCtx.createImageData(W, H);
 
-    for (let i = 0; i < this.wearAccumulation.length; i++) {
-      const wear = this.wearAccumulation[i];
+    for (let i = 0; i < wearData.length; i++) {
+      const wear = wearData[i];
       const idx = i * 4;
 
-      // Normalize wear intensity
-      const wearIntensity = wear / maxWear;
+      if (wear > 0.001) {
+        // Get wear direction from stored direction vectors
+        const dirX = this.flowDirX[i];
+        const dirZ = this.flowDirZ[i];
 
-      if (wearIntensity > 0.001) {
-        // Heatmap: Black -> Blue -> Cyan -> Green -> Yellow -> Red -> White
-        let r, g, b;
-        const t = Math.min(1.0, wearIntensity);
+        // Calculate angle from direction vector
+        const angle = Math.atan2(dirZ, dirX);
 
-        if (t < 0.25) {
-          // Black to Blue
-          const s = t / 0.25;
-          r = 0;
-          g = 0;
-          b = Math.round(s * 255);
-        } else if (t < 0.5) {
-          // Blue to Cyan
-          const s = (t - 0.25) / 0.25;
-          r = 0;
-          g = Math.round(s * 255);
-          b = 255;
-        } else if (t < 0.75) {
-          // Cyan to Yellow
-          const s = (t - 0.5) / 0.25;
-          r = Math.round(s * 255);
-          g = 255;
-          b = Math.round((1 - s) * 255);
-        } else {
-          // Yellow to Red to White
-          const s = (t - 0.75) / 0.25;
-          r = 255;
-          g = Math.round((1 - s * 0.5) * 255);
-          b = Math.round(s * 255);
-        }
+        // HSV Encoding for bidirectional wear:
+        // Hue: Direction of tangential velocity (wear direction)
+        // Saturation: Full saturation (100%) - no normalization
+        // Value: Wear intensity (logarithmic scaling to prevent saturation)
+
+        // Map angle to hue (0-1): -π to π maps to 0 to 1
+        const hue = (angle + Math.PI) / (2 * Math.PI);
+
+        // Saturation: full saturation (no normalization)
+        const saturation = 1.0;
+
+        // Value: logarithmic scaling for better dynamic range
+        // This prevents old pixels from dimming as new wear accumulates
+        const value = Math.min(1.0, Math.log(1 + wear * 100) / Math.log(1 + this.maxWearThreshold * 100));
+
+        // Convert HSV to RGB
+        const [r, g, b] = this.hsvToRgb(hue, saturation, value);
 
         outputData.data[idx] = r;
         outputData.data[idx + 1] = g;
         outputData.data[idx + 2] = b;
-        outputData.data[idx + 3] = Math.round(Math.min(255, t * 255));
+        outputData.data[idx + 3] = Math.round(Math.min(255, value * 255)); // Alpha based on intensity
       } else {
         // Transparent
         outputData.data[idx] = 0;
@@ -586,6 +655,8 @@ class FlowAccumulationManager {
     this.flowDirX.fill(0);
     this.flowDirZ.fill(0);
     this.wearAccumulation.fill(0);
+    this.energyWearAccumulation.fill(0);
+    this.maxWearThreshold = 0.01; // Reset adaptive threshold
     this.flowCtx.clearRect(0, 0, this.flowCanvas.width, this.flowCanvas.height);
     this.flowTexture.needsUpdate = true;
   }
@@ -622,6 +693,8 @@ class UIManager {
     document.getElementById('reset').onclick = () => {
       window.bodyManager.reset();
       window.state.isPaused = false;
+      window.stepCounter = 0;
+      this.updateStepCounter();
       document.getElementById('pause').textContent = 'Pause';
     };
 
@@ -630,19 +703,65 @@ class UIManager {
       document.getElementById('pause').textContent = window.state.isPaused ? 'Resume' : 'Pause';
     };
 
+    document.getElementById('stepFrame').onclick = () => {
+      window.state.isPaused = true;
+      window.singleStep = true;
+      window.stepCounter++;
+      this.updateStepCounter();
+    };
+
     document.getElementById('shape').onchange = (e) => {
       window.bodyManager.setShapeType(e.target.value);
       document.getElementById('customBodyRow').style.display =
         (e.target.value === 'custom') ? 'flex' : 'none';
       document.getElementById('softBodySection').style.display =
         (e.target.value === 'cubeSoft') ? 'block' : 'none';
-      if (e.target.value !== 'custom') window.bodyManager.start();
+
+      // Hide variant row when not using custom body
+      if (e.target.value !== 'custom') {
+        document.getElementById('variantRow').style.display = 'none';
+        window.bodyManager.start();
+      }
     };
 
     document.getElementById('bodyFile').onchange = async (e) => {
       if (e.target.files && e.target.files[0]) {
         window.bodyManager.setCustomBodyURL(URL.createObjectURL(e.target.files[0]));
         await window.bodyManager.start();
+
+        // Check for KHR variants and populate dropdown
+        const variantInfo = window.bodyManager.getVariantInfo();
+        const variantRow = document.getElementById('variantRow');
+        const variantSelect = document.getElementById('variantSelect');
+        const variantCount = document.getElementById('variantCount');
+
+        if (variantInfo && variantInfo.names && variantInfo.names.length > 0) {
+          // Populate dropdown with variant names
+          variantSelect.innerHTML = '';
+          variantInfo.names.forEach((name, index) => {
+            const option = document.createElement('option');
+            option.value = index;
+            option.textContent = name || `Variant ${index + 1}`;
+            variantSelect.appendChild(option);
+          });
+
+          // Update count and show row
+          variantCount.textContent = `${variantInfo.names.length} variants`;
+          variantRow.style.display = 'flex';
+        } else {
+          // No variants found, hide row
+          variantSelect.innerHTML = '<option value="-1">No variants available</option>';
+          variantCount.textContent = '0';
+          variantRow.style.display = 'none';
+        }
+      }
+    };
+
+    // Variant selection handler
+    document.getElementById('variantSelect').onchange = async (e) => {
+      const variantIndex = parseInt(e.target.value);
+      if (variantIndex >= 0) {
+        await window.bodyManager.setVariant(variantIndex);
       }
     };
 
@@ -745,9 +864,9 @@ class UIManager {
     };
 
     // Physics timestep controls
-    document.getElementById('timestepHz').oninput = (e) => {
+    document.getElementById('timestep').oninput = (e) => {
       window.state.timestepHz = parseInt(e.target.value);
-      document.getElementById('timestepHzVal').textContent = window.state.timestepHz + ' Hz';
+      document.getElementById('timestepVal').textContent = window.state.timestepHz + ' Hz';
     };
 
     document.getElementById('maxSubsteps').oninput = (e) => {
@@ -758,6 +877,12 @@ class UIManager {
     document.getElementById('fixedTimestep').oninput = (e) => {
       window.state.fixedTimestep = parseInt(e.target.value);
       document.getElementById('fixedTimestepVal').textContent = window.state.fixedTimestep + ' Hz';
+    };
+
+    // Sub-stepping control
+    document.getElementById('subStepping').oninput = (e) => {
+      window.subStepping = parseInt(e.target.value);
+      document.getElementById('subSteppingVal').textContent = window.subStepping;
     };
   }
 
@@ -867,6 +992,25 @@ class UIManager {
       }
     }
 
+    const useEnergyModelEl = document.getElementById('useEnergyModel');
+    if (useEnergyModelEl) {
+      useEnergyModelEl.onchange = (e) => {
+        if (window.flowAccumulationManager) {
+          window.flowAccumulationManager.useEnergyModel = e.target.checked;
+
+          // Show/hide energy model parameters
+          const params = ['energyModelParams1', 'energyModelParams2', 'energyModelParams3'];
+          params.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = e.target.checked ? '' : 'none';
+          });
+
+          // Re-render with new model
+          window.flowAccumulationManager.render();
+        }
+      };
+    }
+
     const wearIntensityEl = document.getElementById('wearIntensity');
     const wearIntensityValEl = document.getElementById('wearIntensityVal');
     if (wearIntensityEl && wearIntensityValEl) {
@@ -877,6 +1021,42 @@ class UIManager {
           window.flowAccumulationManager.flowAlpha = val;
         }
         // pip6 now shows instantaneous wear rate (no accumulation parameter)
+      };
+    }
+
+    const frictionCoeffEl = document.getElementById('frictionCoeff');
+    const frictionCoeffValEl = document.getElementById('frictionCoeffVal');
+    if (frictionCoeffEl && frictionCoeffValEl) {
+      frictionCoeffEl.oninput = (e) => {
+        const val = parseFloat(e.target.value);
+        frictionCoeffValEl.textContent = val.toFixed(2);
+        if (window.flowAccumulationManager) {
+          window.flowAccumulationManager.mu = val;
+        }
+      };
+    }
+
+    const hardnessEl = document.getElementById('hardness');
+    const hardnessValEl = document.getElementById('hardnessVal');
+    if (hardnessEl && hardnessValEl) {
+      hardnessEl.oninput = (e) => {
+        const val = parseFloat(e.target.value);
+        hardnessValEl.textContent = val.toFixed(1) + ' GPa';
+        if (window.flowAccumulationManager) {
+          window.flowAccumulationManager.hardness = val * 1e9; // GPa to Pa
+        }
+      };
+    }
+
+    const wearCoeffEl = document.getElementById('wearCoeff');
+    const wearCoeffValEl = document.getElementById('wearCoeffVal');
+    if (wearCoeffEl && wearCoeffValEl) {
+      wearCoeffEl.oninput = (e) => {
+        const val = parseFloat(e.target.value);
+        wearCoeffValEl.textContent = val.toFixed(4);
+        if (window.flowAccumulationManager) {
+          window.flowAccumulationManager.K_E = val;
+        }
       };
     }
 
@@ -921,9 +1101,38 @@ class UIManager {
     const collapsibles = document.querySelectorAll('.collapsible');
     collapsibles.forEach(collapsible => {
       collapsible.addEventListener('click', () => {
-        collapsible.classList.toggle('collapsed');
+        const targetId = collapsible.getAttribute('data-target');
+        const details = document.getElementById(targetId);
+        const icon = collapsible.querySelector('.toggle-icon');
+
+        if (details.style.display === 'none' || details.style.display === '') {
+          details.style.display = 'block';
+          icon.textContent = '▼';
+        } else {
+          details.style.display = 'none';
+          icon.textContent = '▶';
+        }
       });
     });
+
+    // Close subsections by default
+    const closedSubsections = ['paddingControlsDetails', 'speedControlsDetails', 'forceControlsDetails', 'physicsParametersDetails'];
+    closedSubsections.forEach(sectionId => {
+      const details = document.getElementById(sectionId);
+      const collapsible = document.querySelector(`[data-target="${sectionId}"]`);
+      if (details && collapsible) {
+        details.style.display = 'none';
+        const icon = collapsible.querySelector('.toggle-icon');
+        if (icon) icon.textContent = '▶';
+      }
+    });
+  }
+
+  updateStepCounter() {
+    const stepCounterEl = document.getElementById('stepCounter');
+    if (stepCounterEl) {
+      stepCounterEl.textContent = window.stepCounter || 0;
+    }
   }
 }
 
@@ -978,10 +1187,28 @@ class AnimationManager {
     const dynBody = this.bodyManager.getBody();
     const dynMesh = this.bodyManager.getMesh();
     
-    // Physics step
-    if (!window.state.isPaused) {
+    // Physics step - handle single step mode and sub-stepping
+    const shouldUpdatePhysics = !window.state.isPaused || window.singleStep;
+
+    if (shouldUpdatePhysics) {
       this.stepPhysics(now, dynBody, dynMesh);
-      window.world.stepSimulation(1 / window.state.timestepHz, window.state.maxSubsteps, 1 / window.state.fixedTimestep);
+
+      // Apply sub-stepping (run physics multiple times per frame)
+      const subSteps = window.subStepping || 1;
+      for (let i = 0; i < subSteps; i++) {
+        window.world.stepSimulation(1 / window.state.timestepHz, window.state.maxSubsteps, 1 / window.state.fixedTimestep);
+      }
+
+      // Increment step counter for each physics update
+      window.stepCounter++;
+      if (window.uiManager) {
+        window.uiManager.updateStepCounter();
+      }
+
+      // Reset single step flag after stepping
+      if (window.singleStep) {
+        window.singleStep = false;
+      }
     }
     
     // Update body position and check bounds
@@ -1270,19 +1497,21 @@ class AnimationManager {
       if (dynMesh && dynMesh.userData.isSoftBody) {
         const nodes = dynBody.get_m_nodes();
         const nodeCount = nodes.size();
-        let avgVx = 0, avgVz = 0;
+        let avgVx = 0, avgVy = 0, avgVz = 0;
 
         for (let i = 0; i < nodeCount; i++) {
           const node = nodes.at(i);
           const nodeVel = node.get_m_v();
           avgVx += nodeVel.x();
+          avgVy += nodeVel.y();
           avgVz += nodeVel.z();
         }
 
         if (nodeCount > 0) {
           avgVx /= nodeCount;
+          avgVy /= nodeCount;
           avgVz /= nodeCount;
-          velocity = { x: avgVx, z: avgVz };
+          velocity = { x: avgVx, y: avgVy, z: avgVz };
           const velocityMag = Math.sqrt(avgVx * avgVx + avgVz * avgVz);
           if (velocityMag > 0.5) {
             cameraRotation = Math.atan2(-avgVz, avgVx);
@@ -1293,7 +1522,7 @@ class AnimationManager {
         angularVelocity = { x: 0, y: 0, z: 0 };
       } else {
         const lv = dynBody.getLinearVelocity();
-        velocity = { x: lv.x(), z: lv.z() };
+        velocity = { x: lv.x(), y: lv.y(), z: lv.z() };
         const velocityMag = Math.sqrt(lv.x() * lv.x() + lv.z() * lv.z());
         if (velocityMag > 0.5) {
           cameraRotation = Math.atan2(-lv.z(), lv.x());
@@ -1540,22 +1769,24 @@ class AnimationManager {
         if (dynMesh && dynMesh.userData.isSoftBody) {
           const nodes = dynBody.get_m_nodes();
           const nodeCount = nodes.size();
-          let avgVx = 0, avgVz = 0;
+          let avgVx = 0, avgVy = 0, avgVz = 0;
           for (let i = 0; i < nodeCount; i++) {
             const node = nodes.at(i);
             const nodeVel = node.get_m_v();
             avgVx += nodeVel.x();
+            avgVy += nodeVel.y();
             avgVz += nodeVel.z();
           }
           if (nodeCount > 0) {
             avgVx /= nodeCount;
+            avgVy /= nodeCount;
             avgVz /= nodeCount;
-            velocity = { x: avgVx, z: avgVz };
+            velocity = { x: avgVx, y: avgVy, z: avgVz };
           }
           angularVelocity = { x: 0, y: 0, z: 0 };
         } else {
           const lv = dynBody.getLinearVelocity();
-          velocity = { x: lv.x(), z: lv.z() };
+          velocity = { x: lv.x(), y: lv.y(), z: lv.z() };
           A.destroy(lv);
           const av = dynBody.getAngularVelocity();
           angularVelocity = { x: av.x(), y: av.y(), z: av.z() };
@@ -1612,8 +1843,10 @@ const state = {
   timestepHz: 60,
   maxSubsteps: 10,
   fixedTimestep: 120,
+  subStepping: 1,
 
   stampInterval: 280,
+  stepCounter: 0,
 
   bboxAlgorithm: 'aabb',
   lastOBB: null,
@@ -1704,7 +1937,12 @@ async function init() {
   window.saveCanvasAsPNG = saveCanvasAsPNG;
   window.sampleContacts = sampleContacts;
   window.computeBoundingBox = computeBoundingBox;
-  
+
+  // Initialize simulation control variables
+  window.subStepping = state.subStepping;
+  window.stepCounter = state.stepCounter;
+  window.singleStep = false;
+
   // Setup UI AFTER all globals are available
   uiManager.initializeEventListeners();
   uiManager.initializeCollapsibleSections();

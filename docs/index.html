@@ -22,6 +22,7 @@
           <span class="toggle-icon">▼</span> Statistics
         </div>
         <div id="statsDetails" class="section-details">
+          <div><span class="pill cyan">Step Counter</span> <span id="stepCounter">0</span></div>
           <div><span class="pill">Frame</span> <span id="frame">0</span></div>
           <div><span class="pill">Contacts</span> <span id="contacts">0</span></div>
           <div style="padding-left: 10px;">
@@ -49,7 +50,11 @@
           <button id="reset">Reset</button>
           <button id="pause">Pause</button>
         </div>
-        
+
+        <div class="row">
+          <button id="stepFrame" style="width: 100%; background: #8b5cf6;">Step Frame</button>
+        </div>
+
         <div class="row">
           <span class="label">Algorithm</span>
           <select id="bboxAlgo">
@@ -59,7 +64,7 @@
             <option value="kdop8">KDOP-8 → OBB</option>
           </select>
         </div>
-        
+
         <div class="row">
           <label><input type="checkbox" id="showWallObstacle" /> Wall Obstacle</label>
         </div>
@@ -73,107 +78,147 @@
           <span class="toggle-icon">▼</span> Physics & Simulation
         </div>
         <div id="physicsSimulationDetails" class="section-details">
-        <div class="row">
-          <span class="label">Padding Width</span>
-          <input id="paddingWidth" type="range" min="50" max="400" value="100" step="10" />
-          <span id="paddingWidthVal" class="pill">1.00x</span>
+
+        <!-- Padding Controls Subsection -->
+        <div class="subsection">
+          <div class="subsection-title collapsible" data-target="paddingControlsDetails">
+            <span class="toggle-icon">▶</span> Padding Controls
+          </div>
+          <div id="paddingControlsDetails" class="subsection-details" style="display: none;">
+            <div class="row">
+              <span class="label">Padding Width</span>
+              <input id="paddingWidth" type="range" min="50" max="400" value="100" step="10" />
+              <span id="paddingWidthVal" class="pill">1.00x</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Padding Height</span>
+              <input id="paddingHeight" type="range" min="50" max="400" value="100" step="10" />
+              <span id="paddingHeightVal" class="pill">1.00x</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Padding Depth Top</span>
+              <input id="paddingDepthTop" type="range" min="1" max="500" value="10" step="1" />
+              <span id="paddingDepthTopVal" class="pill">0.10x</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Padding Depth Bottom</span>
+              <input id="paddingDepthBottom" type="range" min="1" max="500" value="10" step="1" />
+              <span id="paddingDepthBottomVal" class="pill">0.10x</span>
+            </div>
+          </div>
         </div>
-      
-        <div class="row">
-          <span class="label">Padding Height</span>
-          <input id="paddingHeight" type="range" min="50" max="400" value="100" step="10" />
-          <span id="paddingHeightVal" class="pill">1.00x</span>
+
+        <!-- Speed Controls Subsection -->
+        <div class="subsection">
+          <div class="subsection-title collapsible" data-target="speedControlsDetails">
+            <span class="toggle-icon">▶</span> Speed Controls
+          </div>
+          <div id="speedControlsDetails" class="subsection-details" style="display: none;">
+            <div class="row">
+              <span class="label">Speed X</span>
+              <input id="speedX" type="range" min="-60" max="60" value="1" step="1" />
+              <span id="speedXVal" class="pill">1</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Speed Z</span>
+              <input id="speedZ" type="range" min="-60" max="60" value="0" step="1" />
+              <span id="speedZVal" class="pill">0</span>
+            </div>
+          </div>
         </div>
-        
-        <div class="row">
-          <span class="label">Padding Depth Top</span>
-          <input id="paddingDepthTop" type="range" min="1" max="500" value="10" step="1" />
-          <span id="paddingDepthTopVal" class="pill">0.10x</span>
+
+        <!-- Force Controls Subsection -->
+        <div class="subsection">
+          <div class="subsection-title collapsible" data-target="forceControlsDetails">
+            <span class="toggle-icon">▶</span> Force Controls
+          </div>
+          <div id="forceControlsDetails" class="subsection-details" style="display: none;">
+            <div class="row">
+              <span class="label">Force X</span>
+              <input id="forceX" type="range" min="-2000" max="2000" value="0" step="10" />
+              <span id="forceXVal" class="pill">0</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Force Y</span>
+              <input id="forceY" type="range" min="-2000" max="2000" value="0" step="10" />
+              <span id="forceYVal" class="pill">0</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Force Z</span>
+              <input id="forceZ" type="range" min="-2000" max="2000" value="0" step="10" />
+              <span id="forceZVal" class="pill">0</span>
+            </div>
+          </div>
         </div>
-        
-        <div class="row">
-          <span class="label">Padding Depth Bottom</span>
-          <input id="paddingDepthBottom" type="range" min="1" max="500" value="10" step="1" />
-          <span id="paddingDepthBottomVal" class="pill">0.10x</span>
+
+        <!-- Physics Parameters Subsection -->
+        <div class="subsection">
+          <div class="subsection-title collapsible" data-target="physicsParametersDetails">
+            <span class="toggle-icon">▶</span> Physics Parameters
+          </div>
+          <div id="physicsParametersDetails" class="subsection-details" style="display: none;">
+            <div class="row">
+              <span class="label">Gravity</span>
+              <input id="gravity" type="range" min="981" max="20000" value="981" step="1" />
+              <span id="gravityVal" class="pill">9.81</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Friction</span>
+              <input id="friction" type="range" min="0" max="2.0" value="0" step="0.01" />
+              <span id="frictionVal" class="pill">0.00</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Restitution</span>
+              <input id="restitution" type="range" min="0" max="1.0" value="0.6" step="0.01" />
+              <span id="restitutionVal" class="pill">0.60</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Linear Damping</span>
+              <input id="linearDamping" type="range" min="0" max="100" value="1" step="1" />
+              <span id="linearDampingVal" class="pill">0.01</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Angular Damping</span>
+              <input id="angularDamping" type="range" min="0" max="100" value="3" step="1" />
+              <span id="angularDampingVal" class="pill">0.03</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Timestep (Hz)</span>
+              <input id="timestep" type="range" min="30" max="480" value="60" step="10" />
+              <span id="timestepVal" class="pill">60 Hz</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Max Substeps</span>
+              <input id="maxSubsteps" type="range" min="1" max="50" value="10" step="1" />
+              <span id="maxSubstepsVal" class="pill">10</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Fixed Timestep (Hz)</span>
+              <input id="fixedTimestep" type="range" min="60" max="480" value="120" step="10" />
+              <span id="fixedTimestepVal" class="pill">120 Hz</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Sub-stepping</span>
+              <input id="subStepping" type="range" min="1" max="20" value="1" step="1" />
+              <span id="subSteppingVal" class="pill">1</span>
+            </div>
+          </div>
         </div>
-        
-        <div class="row">
-          <span class="label">Speed X</span>
-          <input id="speedX" type="range" min="-60" max="60" value="1" step="1" />
-          <span id="speedXVal" class="pill">1</span>
-        </div>
-        
-        <div class="row">
-          <span class="label">Speed Z</span>
-          <input id="speedZ" type="range" min="-60" max="60" value="0" step="1" />
-          <span id="speedZVal" class="pill">0</span>
-        </div>
-        
-        <div class="row">
-          <span class="label">Force X</span>
-          <input id="forceX" type="range" min="-2000" max="2000" value="0" step="10" />
-          <span id="forceXVal" class="pill">0</span>
-        </div>
-        
-        <div class="row">
-          <span class="label">Force Y</span>
-          <input id="forceY" type="range" min="-2000" max="2000" value="0" step="10" />
-          <span id="forceYVal" class="pill">0</span>
-        </div>
-        
-        <div class="row">
-          <span class="label">Force Z</span>
-          <input id="forceZ" type="range" min="-2000" max="2000" value="0" step="10" />
-          <span id="forceZVal" class="pill">0</span>
-        </div>
-        
-        <div class="row">
-          <span class="label">Gravity</span>
-          <input id="gravity" type="range" min="981" max="20000" value="981" step="1" />
-          <span id="gravityVal" class="pill">9.81</span>
-        </div>
-        
-        <div class="row">
-          <span class="label">Friction</span>
-          <input id="friction" type="range" min="0" max="2.0" value="0" step="0.01" />
-          <span id="frictionVal" class="pill">0.00</span>
-        </div>
-        
-        <div class="row">
-          <span class="label">Restitution</span>
-          <input id="restitution" type="range" min="0" max="1.0" value="0.6" step="0.01" />
-          <span id="restitutionVal" class="pill">0.60</span>
-        </div>
-        
-        <div class="row">
-          <span class="label">Linear Damping</span>
-          <input id="linearDamping" type="range" min="0" max="100" value="1" step="1" />
-          <span id="linearDampingVal" class="pill">0.01</span>
-        </div>
-        
-        <div class="row">
-          <span class="label">Angular Damping</span>
-          <input id="angularDamping" type="range" min="0" max="100" value="3" step="1" />
-          <span id="angularDampingVal" class="pill">0.03</span>
-        </div>
-        
-        <div class="row">
-          <span class="label">Timestep (Hz)</span>
-          <input id="timestepHz" type="range" min="30" max="480" value="60" step="10" />
-          <span id="timestepHzVal" class="pill">60 Hz</span>
-        </div>
-        
-        <div class="row">
-          <span class="label">Max Substeps</span>
-          <input id="maxSubsteps" type="range" min="1" max="50" value="10" step="1" />
-          <span id="maxSubstepsVal" class="pill">10</span>
-        </div>
-        
-        <div class="row">
-          <span class="label">Fixed Timestep</span>
-          <input id="fixedTimestep" type="range" min="60" max="480" value="120" step="10" />
-          <span id="fixedTimestepVal" class="pill">120 Hz</span>
-        </div>
+
         </div>
       </div>
       
@@ -198,6 +243,14 @@
         <div class="row" id="customBodyRow" style="display:none;">
           <span class="label">Body GLB</span>
           <input id="bodyFile" type="file" accept=".glb,.gltf" />
+        </div>
+
+        <div class="row" id="variantRow" style="display:none;">
+          <span class="label">Material Variant</span>
+          <select id="variantSelect">
+            <option value="-1">No variants available</option>
+          </select>
+          <span id="variantCount" class="pill cyan">0</span>
         </div>
         
         <div class="row">
@@ -309,9 +362,31 @@
         </div>
         <div id="wearSimulationDetails" class="section-details">
         <div class="row">
+          <label><input type="checkbox" id="useEnergyModel" /> Energy-Based Wear Model</label>
+        </div>
+
+        <div class="row">
           <span class="label">Wear Intensity</span>
           <input id="wearIntensity" type="range" min="1" max="100" value="15" step="1" />
           <span id="wearIntensityVal" class="pill">0.15</span>
+        </div>
+
+        <div class="row" id="energyModelInfo" style="display:none;">
+          <span class="label" style="font-size: 11px; color: #6b7280; min-width: 100%;">
+            Energy model uses friction coefficient from Physics Parameters
+          </span>
+        </div>
+
+        <div class="row" id="energyModelParams1" style="display:none;">
+          <span class="label">Hardness (GPa)</span>
+          <input id="hardness" type="range" min="0.1" max="10" value="1" step="0.1" />
+          <span id="hardnessVal" class="pill">1.0 GPa</span>
+        </div>
+
+        <div class="row" id="energyModelParams2" style="display:none;">
+          <span class="label">Wear Coeff (K_E)</span>
+          <input id="wearCoeff" type="range" min="0.0001" max="0.01" value="0.001" step="0.0001" />
+          <span id="wearCoeffVal" class="pill">0.0010</span>
         </div>
 
         <div class="row">

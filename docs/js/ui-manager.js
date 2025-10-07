@@ -19,6 +19,11 @@ export class UIManager {
   }
   
   setupSimulationControls() {
+    // Initialize step counter
+    if (!window.stepCounter) {
+      window.stepCounter = 0;
+    }
+
     // Start button
     const startEl = document.getElementById('start');
     if (startEl) {
@@ -27,21 +32,34 @@ export class UIManager {
         window.bodyManager.start();
       };
     }
-    
+
     // Reset button
     const resetEl = document.getElementById('reset');
     if (resetEl) {
       resetEl.onclick = () => {
         window.isPaused = false;
+        window.stepCounter = 0;
+        this.updateStepCounter();
         window.bodyManager.reset();
       };
     }
-    
+
     // Pause button
     const pauseEl = document.getElementById('pause');
     if (pauseEl) {
       pauseEl.onclick = () => {
         window.isPaused = !window.isPaused;
+      };
+    }
+
+    // Step frame button
+    const stepFrameEl = document.getElementById('stepFrame');
+    if (stepFrameEl) {
+      stepFrameEl.onclick = () => {
+        window.isPaused = true;
+        window.singleStep = true;
+        window.stepCounter++;
+        this.updateStepCounter();
       };
     }
     
@@ -187,8 +205,8 @@ export class UIManager {
     const timestepEl = document.getElementById('timestep');
     if (timestepEl) {
       timestepEl.oninput = (e) => {
-        window.timestepHz = parseInt(e.target.value);
-        document.getElementById('timestepVal').textContent = window.timestepHz;
+        window.state.timestepHz = parseInt(e.target.value);
+        document.getElementById('timestepVal').textContent = window.state.timestepHz + ' Hz';
       };
     }
     
@@ -204,7 +222,16 @@ export class UIManager {
     if (fixedTimestepEl) {
       fixedTimestepEl.oninput = (e) => {
         window.fixedTimestep = parseInt(e.target.value);
-        document.getElementById('fixedTimestepVal').textContent = window.fixedTimestep;
+        document.getElementById('fixedTimestepVal').textContent = window.fixedTimestep + ' Hz';
+      };
+    }
+
+    // Sub-stepping control
+    const subSteppingEl = document.getElementById('subStepping');
+    if (subSteppingEl) {
+      subSteppingEl.oninput = (e) => {
+        window.subStepping = parseInt(e.target.value);
+        document.getElementById('subSteppingVal').textContent = window.subStepping;
       };
     }
   }
@@ -342,7 +369,7 @@ export class UIManager {
         const targetId = collapsible.getAttribute('data-target');
         const details = document.getElementById(targetId);
         const icon = collapsible.querySelector('.toggle-icon');
-        
+
         if (details.style.display === 'none' || details.style.display === '') {
           details.style.display = 'block';
           icon.textContent = '▼';
@@ -352,15 +379,17 @@ export class UIManager {
         }
       });
     });
-    
+
     // Set specific sections to be closed by default
     const closedSections = [
       'lineStencilDetails', 'combinedDetails', 'physicsSimulationDetails',
       'statsDetails', 'simulationControlsDetails', 'wallStampingDetails',
       'bodyConfigDetails', 'visualizationDetails', 'groundStampingDetails',
-      'fieldIntensityDetails', 'flowMapDetails', 'exportDetails'
+      'fieldIntensityDetails', 'flowMapDetails', 'exportDetails',
+      // Subsections (all closed by default)
+      'paddingControlsDetails', 'speedControlsDetails', 'forceControlsDetails', 'physicsParametersDetails'
     ];
-    
+
     closedSections.forEach(sectionId => {
       const details = document.getElementById(sectionId);
       const collapsible = document.querySelector(`[data-target="${sectionId}"]`);
@@ -369,6 +398,13 @@ export class UIManager {
         collapsible.querySelector('.toggle-icon').textContent = '▶';
       }
     });
+  }
+
+  updateStepCounter() {
+    const stepCounterEl = document.getElementById('stepCounter');
+    if (stepCounterEl) {
+      stepCounterEl.textContent = window.stepCounter || 0;
+    }
   }
   
   

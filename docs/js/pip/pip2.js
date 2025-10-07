@@ -29,12 +29,45 @@ export class PiP2 {
     const w = Math.max(0.5, lastOBB.width) * paddingWidthScale;
     const h = Math.max(0.5, lastOBB.height) * paddingHeightScale;
     const d = Math.max(1.0, this.pipRenderer.CFG.OBB_DEPTH * paddingDepthBottomScale);
-    
-    this.pipRenderer.updateCamera(this.camera, center, n, e1, w, h, d, -1);
+
+    // Flip Y axis for bottom view by negating e1 (camera up vector)
+    const flippedE1 = e1.clone().multiplyScalar(-1);
+
+    this.pipRenderer.updateCamera(this.camera, center, n, flippedE1, w, h, d, -1);
   }
   
   render() {
-    return this.pipRenderer.renderToCanvas(this.renderTarget, this.camera, this.canvasCtx);
+    // Render to canvas normally
+    const pixels = this.pipRenderer.renderToCanvas(this.renderTarget, this.camera, this.canvasCtx);
+
+    // Flip Y axis for bottom view
+    // Get current canvas content
+    const W = this.pipRenderer.CFG.PIP_W;
+    const H = this.pipRenderer.CFG.PIP_H;
+    const imageData = this.canvasCtx.getImageData(0, 0, W, H);
+
+    // Create flipped image data
+    const flippedData = new ImageData(W, H);
+
+    // Flip vertically: row y becomes row (H-1-y)
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const srcIdx = (y * W + x) * 4;
+        const dstY = H - 1 - y;
+        const dstIdx = (dstY * W + x) * 4;
+
+        flippedData.data[dstIdx] = imageData.data[srcIdx];
+        flippedData.data[dstIdx + 1] = imageData.data[srcIdx + 1];
+        flippedData.data[dstIdx + 2] = imageData.data[srcIdx + 2];
+        flippedData.data[dstIdx + 3] = imageData.data[srcIdx + 3];
+      }
+    }
+
+    // Put flipped data back onto canvas
+    this.canvasCtx.putImageData(flippedData, 0, 0);
+
+    // Return flipped pixels for intersection calculation
+    return flippedData.data;
   }
   
   clear() {

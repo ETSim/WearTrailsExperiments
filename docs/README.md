@@ -194,14 +194,16 @@ Finds the minimum-area oriented bounding box by testing all convex hull edge ori
 #### Velocity-Based OBB Alignment
 When velocity > 0.5 m/s, the bounding box aligns with the velocity vector for improved stability.
 
-#### Field Accumulation (EMA)
-Temporal intensity accumulation using Exponential Moving Average:
+#### Wear Accumulation
+Persistent accumulation of wear data without decay:
 ```javascript
 if (contact) {
-  field[i] = field[i] + gain * (1.0 - field[i])
-} else {
-  field[i] *= decayRate
+  // Accumulate velocity component
+  wearVelocity[i] += alpha * tangentialVelocity
+  // Accumulate normal force component
+  wearForce[i] += alpha * normalForce
 }
+// No decay - wear history persists until manually cleared
 ```
 
 #### Flow Vector Projection

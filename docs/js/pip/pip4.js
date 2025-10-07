@@ -104,10 +104,10 @@ export class PiP4 {
 
           // Calculate world space position of this pixel
           // Position = center + u * width * e1 + v * height * e2
-          const worldX = center.x + u * width * e1.x + v * height * e1.z;
-          const worldZ = center.z + u * width * e2.x + v * height * e2.z;
+          const worldX = center.x + u * width * e1.x + v * height * e2.x;
+          const worldZ = center.z + u * width * e1.z + v * height * e2.z;
 
-          // Calculate position vector from center
+          // Calculate position vector from center (r vector for angular velocity)
           const r = {
             x: worldX - center.x,
             y: 0, // Assuming planar motion at ground level
@@ -120,10 +120,10 @@ export class PiP4 {
             v_rot = this.crossProduct(angularVelocity, r);
           }
 
-          // Calculate total 3D velocity: v_total = v_translational + v_rotational
+          // Calculate total 3D velocity at point r: v_total = v_linear + v_rot
           const v_total = {
             x: velocity.x + v_rot.x,
-            y: v_rot.y,
+            y: (velocity.y || 0) + v_rot.y,
             z: velocity.z + v_rot.z
           };
 
@@ -142,15 +142,17 @@ export class PiP4 {
           const magnitude = Math.sqrt(v_tangential.x * v_tangential.x + v_tangential.z * v_tangential.z);
           const angle = Math.atan2(v_tangential.z, v_tangential.x);
 
-          // Encode velocity as HSV
-          // Hue: direction (0-360° mapped to 0-1)
-          const hue = (angle + Math.PI) / (2 * Math.PI); // Normalize to 0-1
+          // Encode velocity as HSV color
+          // Hue: direction angle (0-360° mapped to 0-1)
+          const hue = (angle + Math.PI) / (2 * Math.PI);
 
-          // Saturation: magnitude (normalized)
-          const saturation = Math.min(1.0, magnitude / v_max);
+          // Saturation: full saturation for all velocities
+          const saturation = 1.0;
 
-          // Value: full brightness
-          const value = 1.0;
+          // Value: magnitude (linear + angular at point r)
+          // Normalized by v_max with minimum threshold
+          const normalizedMag = Math.min(1.0, magnitude / v_max);
+          const value = Math.max(0.3, normalizedMag); // Minimum 30% brightness for visibility
 
           // Convert HSV to RGB
           const [r_val, g_val, b_val] = this.hsvToRgb(hue, saturation, value);

@@ -47,10 +47,12 @@ export class PiPManager {
     // Render tangential velocity vector field
     this.pip4.render(pixels1, pixels2, velocity, angularVelocity, lastOBB);
 
-    // Render instantaneous pressure map (no accumulation for performance)
+    // Accumulate and render pressure map with HSV encoding
+    this.pip5.accumulate(pixels1, pixels2, velocity, angularVelocity, lastOBB);
     this.pip5.render(pixels1, pixels2, velocity, angularVelocity, lastOBB);
 
-    // Render instantaneous wear rate (no accumulation for performance)
+    // Accumulate and render wear map with HSV encoding
+    this.pip6.accumulate(pixels1, pixels2, velocity, angularVelocity, normalForce, lastOBB);
     this.pip6.render(pixels1, pixels2, velocity, angularVelocity, normalForce, lastOBB);
 
     // Reset render target

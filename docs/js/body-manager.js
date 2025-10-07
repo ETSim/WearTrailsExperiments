@@ -24,6 +24,7 @@ export class BodyManager {
     this.dynBody = null;
     this.shapeType = 'cube10';
     this.customBodyURL = null;
+    this.variantInfo = null; // Store KHR variant information
     this.friction = 0.0;
     this.restitution = 0.6; // Higher default restitution for more elastic behavior
     this.linearDamping = 0.01;
@@ -139,6 +140,65 @@ export class BodyManager {
       this.dynBody.setActivationState(4);
     }
   }
+
+  getVariantInfo() {
+    return this.variantInfo;
+  }
+
+  async setVariant(variantIndex) {
+    if (!this.variantInfo || !this.dynMesh) {
+      console.warn('No variant information available');
+      return false;
+    }
+
+    const { names, mappings, parser } = this.variantInfo;
+
+    if (variantIndex < 0 || variantIndex >= names.length) {
+      console.warn('Invalid variant index:', variantIndex);
+      return false;
+    }
+
+    try {
+      // Find the material index for this variant from mappings
+      let materialIndex = null;
+      for (const mapping of mappings) {
+        if (mapping.variants.includes(variantIndex)) {
+          materialIndex = mapping.material;
+          break;
+        }
+      }
+
+      if (materialIndex !== null) {
+        // Load the variant material using the GLTF parser
+        const newMaterial = await parser.getDependency('material', materialIndex);
+
+        // Clone and apply the material
+        if (newMaterial) {
+          // Dispose of old material
+          if (this.dynMesh.material) {
+            if (this.dynMesh.material.map) this.dynMesh.material.map.dispose();
+            this.dynMesh.material.dispose();
+          }
+
+          // Apply new material
+          this.dynMesh.material = newMaterial.clone();
+          this.dynMesh.material.needsUpdate = true;
+          this.dynMesh.material.side = this.THREE.FrontSide;
+
+          // Update current variant index
+          this.variantInfo.currentVariantIndex = variantIndex;
+          return true;
+        }
+      }
+
+      // If no specific material found for this variant, use default
+      console.warn('No material mapping found for variant index:', variantIndex);
+      return false;
+    } catch (e) {
+      console.error('Error setting variant:', e);
+      return false;
+    }
+  }
   
   destroy() {
     if (this.dynMesh) {
@@ -230,9 +290,17 @@ export class BodyManager {
       // Fallback to default cube
       made = makeCube(...params, this.generateRandomCubeTexture, 2, 10);
     }
-    
+
     this.dynMesh = made.mesh;
     this.dynBody = made.body;
+
+    // Store variant info if available (from custom GLB)
+    if (made.variantInfo) {
+      this.variantInfo = made.variantInfo;
+    } else {
+      this.variantInfo = null;
+    }
+
     this.reset();
   }
   

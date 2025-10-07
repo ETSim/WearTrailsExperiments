@@ -13,11 +13,14 @@ export class PiP3 {
     const W = this.pipRenderer.CFG.PIP_W;
     const H = this.pipRenderer.CFG.PIP_H;
 
-    // Compute raw intersection (no Y-flip)
+    // Compute intersection
+    // Note: pixels2 (bottom view) is already Y-flipped in pip2.js before being passed here
     const intersectionData = new ImageData(W, H);
+
     for (let i = 0; i < pixels1.length; i += 4) {
       const has1 = (pixels1[i] | pixels1[i+1] | pixels1[i+2]) > 10;
       const has2 = (pixels2[i] | pixels2[i+1] | pixels2[i+2]) > 10;
+
       if (has1 && has2) {
         intersectionData.data[i]   = 255;
         intersectionData.data[i+1] = 255;
@@ -30,6 +33,7 @@ export class PiP3 {
         intersectionData.data[i+3] = 0;
       }
     }
+
     this.canvasCtx.putImageData(intersectionData, 0, 0);
   }
   
