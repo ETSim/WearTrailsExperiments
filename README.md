@@ -1,4 +1,4 @@
-# WearTrails Experiments — Renamed Build
+# WearTrails Experiments
 
 ![GLTF/GLB](https://img.shields.io/badge/GLTF%2FGLB-detected-blue) ![ammo.js](https://img.shields.io/badge/ammo.js-detected-blue)  ![three.js](https://img.shields.io/badge/three.js-detected-blue)
 
