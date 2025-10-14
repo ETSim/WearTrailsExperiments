@@ -1,5 +1,64 @@
+
+import { Plane } from './math/plane.js?v=2.1';
+
 // Contact Sampling and Geometric Center Calculation
 // Robust acquisition with noise control, hysteresis, and quality gates
+
+// ===== Spatial Grid for O(n) Neighbor Queries =====
+class SpatialGrid {
+  constructor(cellSize) {
+    this.cellSize = cellSize;
+    this.cells = new Map();  // key: "gx,gz" → value: array of points
+  }
+
+  clear() {
+    this.cells.clear();
+  }
+
+  insert(point) {
+    const key = this._getKey(point.x, point.z);
+    if (!this.cells.has(key)) {
+      this.cells.set(key, []);
+    }
+    this.cells.get(key).push(point);
+  }
+
+  queryNeighbors(point, radius) {
+    // 9-cell neighborhood check (current cell + 8 surrounding cells)
+    const radiusSq = radius * radius;
+    const neighbors = [];
+
+    const cellX = Math.floor(point.x / this.cellSize);
+    const cellZ = Math.floor(point.z / this.cellSize);
+
+    // Check 3x3 grid of cells
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const key = `${cellX + dx},${cellZ + dz}`;
+        const cellPoints = this.cells.get(key);
+
+        if (cellPoints) {
+          for (const candidate of cellPoints) {
+            if (candidate === point) continue; // Skip self
+
+            const distSq = (point.x - candidate.x) ** 2 + (point.z - candidate.z) ** 2;
+            if (distSq <= radiusSq) {
+              neighbors.push(candidate);
+            }
+          }
+        }
+      }
+    }
+
+    return neighbors;
+  }
+
+  _getKey(x, z) {
+    const gx = Math.floor(x / this.cellSize);
+    const gz = Math.floor(z / this.cellSize);
+    return `${gx},${gz}`;
+  }
+}
 
 // ===== Contact Parameters Class =====
 export class ContactParams {
@@ -23,15 +82,17 @@ export class ContactParams {
     this.k = overrides.k ?? 2;                      // Min neighbors required
 
     // Temporal smoothing
-    this.alphaCentroid = overrides.alphaCentroid ?? 0.85;  // EMA factor
+    this.tauCentroid = overrides.tauCentroid ?? 0.05;  // EMA time constant in seconds (50ms)
     this.N_hold = overrides.N_hold ?? 2;            // Hold-last frames
 
     // Performance limits
     this.N_target = overrides.N_target ?? 48;       // Target sample count
     this.maxManifolds = overrides.maxManifolds ?? 32; // Max manifolds to scan
 
-    // Ground plane (default: y=0 horizontal)
-    this.groundNormal = overrides.groundNormal ?? {x: 0, y: 1, z: 0};
+    // Ground plane (default: y=0 horizontal) - ensure normalized
+    const gn = overrides.groundNormal ?? {x: 0, y: 1, z: 0};
+    const gnMag = Math.sqrt(gn.x * gn.x + gn.y * gn.y + gn.z * gn.z);
+    this.groundNormal = gnMag > 1e-9 ? {x: gn.x/gnMag, y: gn.y/gnMag, z: gn.z/gnMag} : {x: 0, y: 1, z: 0};
     this.groundOffset = overrides.groundOffset ?? null; // null = use softGroundThreshold
 
     // Filter enable flags (all true by default for production)
@@ -81,6 +142,8 @@ export class ContactState {
     this.prevPts = null;         // Previous points (for hold-last)
     this.prevFlags = null;       // Previous flags
     this.holdFrames = 0;         // Hold-last counter
+    this.prevDt = null;          // Previous delta time for frame-rate independent EMA
+    this.lastUpdateTime = null;  // Last update timestamp
   }
 
   reset() {
@@ -89,34 +152,47 @@ export class ContactState {
     this.prevPts = null;
     this.prevFlags = null;
     this.holdFrames = 0;
+    this.prevDt = null;
+    this.lastUpdateTime = null;
   }
 }
 
-export function getMeshKDOP8OnPlane(mesh, planeY, THREE, tolerance = 0.15) {
+export function getMeshKDOP8OnPlane(mesh, plane, THREE, tolerance = 0.15) {
   if (!mesh || !mesh.geometry) return null;
+  if (!plane || typeof plane.getLocalFrame !== 'function') {
+    console.warn('Plane object invalid or missing getLocalFrame method');
+    return null;
+  }
 
-  // Project mesh vertices onto the XZ plane at given Y height
   const pos = mesh.geometry.attributes.position;
   const matrixWorld = mesh.matrixWorld;
   const points2D = [];
   const tempVec = new THREE.Vector3();
+  const localFrame = plane.getLocalFrame();
 
-  for (let i = 0; i < pos.count; i++) {
+  // Performance optimization: Limit vertex sampling for large meshes
+  const MAX_VERTICES_TO_SAMPLE = 500; // Limit to first 500 vertices
+  const totalVertices = pos.count;
+  const shouldSample = totalVertices > MAX_VERTICES_TO_SAMPLE;
+  const sampleStep = shouldSample ? Math.ceil(totalVertices / MAX_VERTICES_TO_SAMPLE) : 1;
+
+  for (let i = 0; i < pos.count; i += sampleStep) {
     tempVec.set(pos.getX(i), pos.getY(i), pos.getZ(i));
     tempVec.applyMatrix4(matrixWorld);
 
-    // Only consider vertices very close to the contact plane
-    if (Math.abs(tempVec.y - planeY) < tolerance) {
-      points2D.push({ x: tempVec.x, z: tempVec.z });
+    if (Math.abs(plane.signedDistanceToPoint(tempVec)) < tolerance) {
+      const projected = plane.projectPoint(tempVec, new THREE.Vector3());
+      const u = projected.dot(localFrame.tangent);
+      const v = projected.dot(localFrame.bitangent);
+      points2D.push({ x: u, z: v });
     }
   }
 
   if (points2D.length < 3) return null;
 
-  // Remove duplicate points
   const uniquePoints = [];
   const seen = new Set();
-  const gridSize = 0.01; // 1cm grid for deduplication
+  const gridSize = 0.01;
 
   for (const pt of points2D) {
     const gridX = Math.round(pt.x / gridSize);
@@ -131,7 +207,6 @@ export function getMeshKDOP8OnPlane(mesh, planeY, THREE, tolerance = 0.15) {
 
   if (uniquePoints.length < 3) return null;
 
-  // KDOP-8: Test 8 orientations and find minimum area bounding box
   let bestArea = Infinity;
   let bestBox = null;
 
@@ -140,7 +215,6 @@ export function getMeshKDOP8OnPlane(mesh, planeY, THREE, tolerance = 0.15) {
     const cosT = Math.cos(theta);
     const sinT = Math.sin(theta);
 
-    // Rotate points and find AABB in rotated space
     let minU = Infinity, maxU = -Infinity;
     let minV = Infinity, maxV = -Infinity;
 
@@ -171,31 +245,28 @@ export function getMeshKDOP8OnPlane(mesh, planeY, THREE, tolerance = 0.15) {
 
   if (!bestBox) return null;
 
-  // Return the 4 corners of the best bounding box
-  const theta = bestBox.theta;
-  const cosT = Math.cos(theta);
-  const sinT = Math.sin(theta);
-  const cu = bestBox.centerU;
-  const cv = bestBox.centerV;
-  const hw = bestBox.halfWidth;
-  const hh = bestBox.halfHeight;
+  const { theta, centerU, centerV, halfWidth, halfHeight } = bestBox;
 
-  // Four corners in rotated space
   const corners = [
-    { u: cu - hw, v: cv - hh },
-    { u: cu + hw, v: cv - hh },
-    { u: cu + hw, v: cv + hh },
-    { u: cu - hw, v: cv + hh }
+    { u: centerU - halfWidth, v: centerV - halfHeight },
+    { u: centerU + halfWidth, v: centerV - halfHeight },
+    { u: centerU + halfWidth, v: centerV + halfHeight },
+    { u: centerU - halfWidth, v: centerV + halfHeight }
   ];
 
-  // Transform back to world space
-  return corners.map(c => ({
-    x: c.u * cosT - c.v * sinT,
-    z: c.u * sinT + c.v * cosT
-  }));
+  const tangent = localFrame.tangent;
+  const bitangent = localFrame.bitangent;
+  const p0 = plane.p0;
+
+  return corners.map(c => {
+    const pointOnPlane = new THREE.Vector3().copy(p0)
+        .addScaledVector(tangent, c.u)
+        .addScaledVector(bitangent, c.v);
+    return { x: pointOnPlane.x, y: pointOnPlane.y, z: pointOnPlane.z };
+  });
 }
 
-export function augmentContactsWithKDOP8(contacts, mesh, planeY, gc, THREE) {
+export function augmentContactsWithKDOP8(contacts, mesh, plane, gc, THREE, angularVelocity = null) {
   // ONLY augment if there are actual contacts to work with
   if (contacts.length === 0) {
     return [];
@@ -209,24 +280,49 @@ export function augmentContactsWithKDOP8(contacts, mesh, planeY, gc, THREE) {
     isSynthetic: false
   }));
 
-  // Calculate contact Y-plane for KDOP projection
-  const contactYs = contacts.map(c => c.y);
-  const avgY = contactYs.reduce((a, b) => a + b, 0) / contactYs.length;
-
   const tolerance = 0.10; // 10cm tolerance for mesh projection
 
   // Get KDOP-8 bounding box corners (4 points, much simpler than convex hull)
-  const corners = getMeshKDOP8OnPlane(mesh, avgY, THREE, tolerance);
+  const corners = getMeshKDOP8OnPlane(mesh, plane, THREE, tolerance);
+
+  // Calculate rotation speed if angular velocity provided
+  let rotationSpeed = 0;
+  if (angularVelocity) {
+    rotationSpeed = Math.sqrt(
+      angularVelocity.x ** 2 + 
+      angularVelocity.y ** 2 + 
+      angularVelocity.z ** 2
+    );
+  }
+
+  // High rotation threshold: > 5 rad/s
+  const isHighRotation = rotationSpeed > 5.0;
 
   if (corners && corners.length === 4) {
     // Add all 4 corners as synthetic points
     for (const corner of corners) {
       augmented.push({
         x: corner.x,
-        y: avgY,
+        y: corner.y,
         z: corner.z,
         isSynthetic: true
       });
+    }
+
+    // For high rotation: add midpoint synthetics between corners for better coverage
+    if (isHighRotation) {
+      for (let i = 0; i < 4; i++) {
+        const c1 = corners[i];
+        const c2 = corners[(i + 1) % 4];
+        
+        augmented.push({
+          x: (c1.x + c2.x) / 2,
+          y: (c1.y + c2.y) / 2,
+          z: (c1.z + c2.z) / 2,
+          isSynthetic: true
+        });
+      }
+      console.log(`High rotation detected (${rotationSpeed.toFixed(2)} rad/s) - added ${4} midpoint synthetic contacts`);
     }
   }
 
@@ -260,9 +356,34 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
   }
   if (!state) state = new ContactState();
 
+  // Calculate frame-rate independent dt
+  const currentTime = performance.now() / 1000.0; // Convert to seconds
+  if (state.lastUpdateTime !== null) {
+    state.prevDt = currentTime - state.lastUpdateTime;
+  } else {
+    state.prevDt = 1.0 / 60.0; // Default 60 FPS
+  }
+  state.lastUpdateTime = currentTime;
+
   // Set ground offset from softGroundThreshold if not explicitly set
   const groundOffset = params.groundOffset ?? softGroundThreshold;
   const n = params.groundNormal;
+  
+  // Create plane for geometric operations
+  let plane = null;
+  try {
+    plane = new Plane(new THREE.Vector3(n.x, n.y, n.z), new THREE.Vector3(0, groundOffset, 0));
+    
+    // Verify plane has required methods
+    if (!plane.getLocalFrame || typeof plane.getLocalFrame !== 'function') {
+      console.error('Plane class is outdated - missing getLocalFrame method. Please hard refresh (Ctrl+Shift+R)');
+      plane = null;
+    }
+  } catch (error) {
+    console.error('Failed to create Plane:', error);
+    // Fallback: plane operations will be skipped
+  }
+
 
   const candidates = [];  // Raw contact candidates
   const nAccum = new THREE.Vector3(0, 0, 0);
@@ -335,10 +456,10 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
       const nodePos = node.get_m_x();
       const nodeNormal = node.get_m_n();
 
-      const pi = { x: nodePos.x(), y: nodePos.y(), z: nodePos.z() };
+      const pi = new THREE.Vector3(nodePos.x(), nodePos.y(), nodePos.z() );
 
       // Signed distance to ground plane
-      const sd = (pi.x * n.x + pi.y * n.y + pi.z * n.z) - groundOffset;
+      const sd = plane.signedDistanceToPoint(pi);
 
       // Determine if node should be kept
       let keepNode = false;
@@ -367,7 +488,7 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
       }
 
       if (keepNode) {
-        candidates.push(pi);
+        candidates.push({x: pi.x, y: pi.y, z: pi.z});
 
         // Accumulate position and normal
         pAccum.x += pi.x;
@@ -437,9 +558,9 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
     const gridInv = 1 / params.gridCellXZ;
 
     for (const pt of filtered) {
-      const gx = (pt.x * gridInv) | 0;
-      const gz = (pt.z * gridInv) | 0;
-      const key = (gx << 16) ^ (gz & 0xffff);
+      const gx = Math.floor(pt.x * gridInv);
+      const gz = Math.floor(pt.z * gridInv);
+      const key = `${gx},${gz}`; // String key prevents hash collisions
 
       if (!seen.has(key)) {
         seen.add(key);
@@ -450,35 +571,38 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
   }
 
   // Filter 2: Height Outlier Rejection (IQR) (optional)
-  if (params.enableIQROutlier && filtered.length > 4) {
+  // Only apply IQR when n >= 8 (quartiles well-defined)
+  if (params.enableIQROutlier && filtered.length >= 8 && plane) {
     const beforeIQR = filtered.length;
-    const ys = filtered.map(p => p.y).sort((a, b) => a - b);
-    const q25 = ys[Math.floor(ys.length * 0.25)];
-    const q75 = ys[Math.floor(ys.length * 0.75)];
+    const distances = filtered.map(p => plane.signedDistanceToPoint(new THREE.Vector3(p.x, p.y, p.z))).sort((a, b) => a - b);
+    const q25 = distances[Math.floor(distances.length * 0.25)];
+    const q75 = distances[Math.floor(distances.length * 0.75)];
     const iqr = Math.max(1e-6, q75 - q25);
-    const yMin = q25 - 1.5 * iqr;
-    const yMax = q75 + 1.5 * iqr;
+    const dMin = q25 - 1.5 * iqr;
+    const dMax = q75 + 1.5 * iqr;
 
-    filtered = filtered.filter(p => p.y >= yMin && p.y <= yMax);
+    filtered = filtered.filter(p => {
+        const dist = plane.signedDistanceToPoint(new THREE.Vector3(p.x, p.y, p.z));
+        return dist >= dMin && dist <= dMax;
+    });
   }
 
-  // Filter 3: Neighbor Support (only when explicitly enabled for soft bodies)
+  // Filter 3: Neighbor Support with Spatial Grid (O(n) instead of O(n²))
   // Note: This is disabled by default for soft bodies in ContactParams.forSoftBody()
   if (params.enableNeighborSupport && isSoftBody && filtered.length > params.k) {
-    const beforeNeighbor = filtered.length;
-    const kept = [];
-    const r2 = params.r_n ** 2;
+    // Build spatial grid for O(n) neighbor queries
+    const grid = new SpatialGrid(params.r_n);
+    for (const pt of filtered) {
+      grid.insert(pt);
+    }
 
-    for (const a of filtered) {
-      let kCnt = 0;
-      for (const b of filtered) {
-        if (a === b) continue;
-        const dx = a.x - b.x;
-        const dz = a.z - b.z;
-        if (dx * dx + dz * dz <= r2) kCnt++;
-        if (kCnt >= params.k) break;
+    // Check neighbor count using grid
+    const kept = [];
+    for (const pt of filtered) {
+      const neighbors = grid.queryNeighbors(pt, params.r_n);
+      if (neighbors.length >= params.k) {
+        kept.push(pt);
       }
-      if (kCnt >= params.k) kept.push(a);
     }
 
     // Only apply filter if we still have enough contacts after filtering
@@ -495,8 +619,9 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
 
   if (rawCount > 0) {
     nAccum.multiplyScalar(1 / Math.max(1, rawCount));
-    if (nAccum.y < 0) nAccum.multiplyScalar(-1);
-    avgContactNormal.copy(nAccum.lengthSq() > 1e-12 ? nAccum.normalize() : new THREE.Vector3(0, 1, 0));
+    const groundNormalVec = new THREE.Vector3(n.x, n.y, n.z);
+    if (nAccum.dot(groundNormalVec) < 0) nAccum.multiplyScalar(-1);
+    avgContactNormal.copy(nAccum.lengthSq() > 1e-12 ? nAccum.normalize() : groundNormalVec);
     pAccum.multiplyScalar(1 / Math.max(1, rawCount));
     avgContactPoint.copy(pAccum);
   }
@@ -514,13 +639,14 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
       z: sumz / filtered.length
     };
 
-    // Temporal EMA smoothing (optional)
-    if (params.enableEMASmoothing && state.prevC) {
-      const a = params.alphaCentroid;
+    // Temporal EMA smoothing (optional) - frame-rate independent
+    if (params.enableEMASmoothing && state.prevC && state.prevDt) {
+      // α = exp(-dt/τ) for frame-rate independence
+      const alpha = Math.exp(-state.prevDt / params.tauCentroid);
       geometricCenter = {
-        x: a * state.prevC.x + (1 - a) * geometricCenter.x,
-        y: a * state.prevC.y + (1 - a) * geometricCenter.y,
-        z: a * state.prevC.z + (1 - a) * geometricCenter.z
+        x: alpha * state.prevC.x + (1 - alpha) * geometricCenter.x,
+        y: alpha * state.prevC.y + (1 - alpha) * geometricCenter.y,
+        z: alpha * state.prevC.z + (1 - alpha) * geometricCenter.z
       };
     }
   }
@@ -536,13 +662,13 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
     }
 
     // Vertical spread gate
-    if (filtered.length > 1) {
-      const ys = filtered.map(p => p.y);
-      const yMean = ys.reduce((a, b) => a + b, 0) / ys.length;
-      const yVar = ys.reduce((a, b) => a + (b - yMean) ** 2, 0) / ys.length;
-      const yStd = Math.sqrt(yVar);
+    if (filtered.length > 1 && plane) {
+      const distances = filtered.map(p => plane.signedDistanceToPoint(new THREE.Vector3(p.x, p.y, p.z)));
+      const dMean = distances.reduce((a, b) => a + b, 0) / distances.length;
+      const dVar = distances.reduce((a, b) => a + (b - dMean) ** 2, 0) / distances.length;
+      const dStd = Math.sqrt(dVar);
 
-      if (yStd > params.y_max) {
+      if (dStd > params.y_max) {
         flags.rejected = true;
         flags.reasons.push('vertical_spread');
       }
@@ -590,13 +716,26 @@ export function sampleContacts(dispatcher, THREE, dynMesh, MIN_CONTACTS_FOR_STAB
       dynMesh &&
       geometricCenter) {
 
-    // Augment with synthetic KDOP-8 corner points (4 points max)
+    // Get angular velocity from physics body for high-rotation detection
+    let angularVelocity = null;
+    if (dynMesh && dynMesh.userData.physicsBody) {
+      try {
+        const av = dynMesh.userData.physicsBody.getAngularVelocity();
+        angularVelocity = { x: av.x(), y: av.y(), z: av.z() };
+        // Note: We don't destroy av here as it's managed by Ammo
+      } catch (e) {
+        // Failed to get angular velocity - not critical
+      }
+    }
+
+    // Augment with synthetic KDOP-8 corner points (4-8 points depending on rotation)
     const augmented = augmentContactsWithKDOP8(
       filtered,
       dynMesh,
-      avgContactPoint.y,
+      plane,
       geometricCenter,
-      THREE
+      THREE,
+      angularVelocity  // Pass angular velocity for high-rotation detection
     );
 
     finalContacts = augmented;

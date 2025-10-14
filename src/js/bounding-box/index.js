@@ -6,7 +6,7 @@ import { computePCAOBB } from './obb.js';
 import { computeOMBB } from './ombb.js';
 import { computeKDOP } from './kdop.js';
 import { computeHybrid } from './hybrid.js';
-import { rotatePoints2D } from './utils.js';
+import { rotatePoints2D, angleDifference, wrapToPi } from './utils.js';
 
 export function computeBoundingBox(contactPts, contactPoint, contactNormal, algorithm, CFG, THREE, dynBody, A, lastOBB, previousVelocity, previousAngle, ANGLE_STABILITY_THRESHOLD, isSoftBody = false) {
   if (!contactPts || contactPts.length === 0) return null;
@@ -62,8 +62,8 @@ export function computeBoundingBox(contactPts, contactPoint, contactNormal, algo
   
   // If velocity is significant, align box with velocity direction
   if (velocityMag > 0.5) {
-    // Use velocity direction as box orientation
-    finalTheta = Math.atan2(currentVelocity.z, currentVelocity.x);
+    // Use velocity direction as box orientation (wrapped to [-π, π])
+    finalTheta = wrapToPi(Math.atan2(currentVelocity.z, currentVelocity.x));
     
     // Project all points along velocity direction and compute bounds
     const rotated = rotatePoints2D(pts2D, -finalTheta);
@@ -133,11 +133,9 @@ export function computeBoundingBox(contactPts, contactPoint, contactNormal, algo
   
   // Apply angle stability if velocity is consistent
   if (lastOBB && velocityConsistent && velocityMag > 0.5) {
-    let angleDiff = Math.abs(finalTheta - previousAngle);
-    while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
-    while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-    angleDiff = Math.abs(angleDiff);
-    
+    // Calculate shortest angular difference (properly wrapped)
+    const angleDiff = Math.abs(angleDifference(finalTheta, previousAngle));
+
     if (angleDiff > ANGLE_STABILITY_THRESHOLD) {
       finalTheta = previousAngle;
       const stableBBox = projectBBox(pts2D, finalTheta);

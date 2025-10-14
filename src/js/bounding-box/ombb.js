@@ -1,6 +1,6 @@
 // OMBB (Optimal Minimum Bounding Box) - Rotating Calipers Algorithm
 
-import { projectBBox } from './utils.js';
+import { projectBBox, wrapToPi } from './utils.js';
 
 export function computeOMBB(pts, CFG, computeAABB) {
   if (pts.length < 3) return computeAABB(pts, CFG);
@@ -36,8 +36,8 @@ export function computeOMBB(pts, CFG, computeAABB) {
     const p2 = hull[(i + 1) % hull.length];
     const dx = p2.x - p1.x;
     const dz = p2.z - p1.z;
-    const theta = Math.atan2(dz, dx);
-    
+    const theta = wrapToPi(Math.atan2(dz, dx));
+
     const bbox = projectBBox(hull, theta);
     if (bbox.area < bestArea) {
       bestArea = bbox.area;

@@ -298,6 +298,49 @@ export class UIManager {
     if (enableSyntheticEl) {
       enableSyntheticEl.onchange = (e) => {
         window.state.enableSynthetic = e.target.checked;
+
+        // When disabled, clear all cached contact results and force fresh sampling
+        if (!e.target.checked) {
+          // Clear cached contacts in animation manager
+          if (window.animationManager) {
+            window.animationManager.cachedContactResult = null;
+            window.animationManager.cachedOBB = null;
+          }
+
+          // Clear current contact samples to remove all synthetic contacts immediately
+          if (window.state) {
+            window.state.contactSamples = [];
+          }
+
+          // Force immediate visualization update to hide all contact points
+          if (window.visualizationManager && window.visualizationManager.contactPointsGroup) {
+            // Clear all contact point spheres
+            while (window.visualizationManager.contactPointsGroup.children.length > 0) {
+              const child = window.visualizationManager.contactPointsGroup.children[0];
+              if (child.geometry) child.geometry.dispose();
+              if (child.material) child.material.dispose();
+              window.visualizationManager.contactPointsGroup.remove(child);
+            }
+          }
+
+          // Hide geometric center marker
+          if (window.visualizationManager && window.visualizationManager.geomMeanMarker) {
+            window.visualizationManager.geomMeanMarker.visible = false;
+          }
+
+          // Reset contact count display
+          const contactsEl = document.getElementById('contacts');
+          if (contactsEl) contactsEl.textContent = '0';
+
+          const realContactsEl = document.getElementById('realContacts');
+          if (realContactsEl) realContactsEl.textContent = '0';
+
+          const syntheticContactsEl = document.getElementById('syntheticContacts');
+          if (syntheticContactsEl) {
+            syntheticContactsEl.textContent = '0';
+            syntheticContactsEl.style.fontWeight = 'normal';
+          }
+        }
       };
     }
   }
