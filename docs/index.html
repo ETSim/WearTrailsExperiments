@@ -34,6 +34,11 @@
           <div><span class="pill">Box Type</span> <span id="bboxType">OMBB</span></div>
           <div><span class="pill">Velocity</span> <span id="velocity">—</span></div>
           <div><span class="pill">Angular Vel</span> <span id="angularVel">—</span></div>
+          <div><span class="pill cyan">Angular Momentum (L)</span> <span id="angularMomentum">—</span></div>
+          <div><span class="pill orange">Stamp Timestep (δt)</span> <span id="stampTimestep">—</span></div>
+          <div><span class="pill orange">PiP Timestep (δt)</span> <span id="pipTimestep">—</span></div>
+          <div><span class="pill orange">Max Sliding Dist</span> <span id="maxSlidingDist">—</span></div>
+          <div><span class="pill purple">Accumulated Sliding Dist</span> <span id="accumulatedSlidingDist">—</span></div>
           <div><span class="pill">Applied Force</span> <span id="appliedForce">0 N</span></div>
           <div><span class="pill">FPS</span> <span id="fps">0</span></div>
         </div>
@@ -138,21 +143,54 @@
           </div>
           <div id="forceControlsDetails" class="subsection-details" style="display: none;">
             <div class="row">
-              <span class="label">Force X</span>
-              <input id="forceX" type="range" min="-2000" max="2000" value="0" step="10" />
+              <span class="label">Force X (at base)</span>
+              <input id="forceX" type="range" min="0" max="20" value="0" step="0.5" />
               <span id="forceXVal" class="pill">0</span>
             </div>
 
             <div class="row">
               <span class="label">Force Y</span>
-              <input id="forceY" type="range" min="-2000" max="2000" value="0" step="10" />
+              <input id="forceY" type="range" min="0" max="20" value="0" step="0.5" />
               <span id="forceYVal" class="pill">0</span>
             </div>
 
             <div class="row">
-              <span class="label">Force Z</span>
-              <input id="forceZ" type="range" min="-2000" max="2000" value="0" step="10" />
+              <span class="label">Force Z (at base)</span>
+              <input id="forceZ" type="range" min="0" max="20" value="0" step="0.5" />
               <span id="forceZVal" class="pill">0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Angular Velocity Controls Subsection -->
+        <div class="subsection">
+          <div class="subsection-title collapsible" data-target="angularVelocityControlsDetails">
+            <span class="toggle-icon">▶</span> Angular Velocity Controls
+          </div>
+          <div id="angularVelocityControlsDetails" class="subsection-details" style="display: none;">
+            <div class="row">
+              <span class="label">Torque X (rad/s impulse)</span>
+              <input id="torqueX" type="range" min="0" max="20" value="0" step="0.5" />
+              <span id="torqueXVal" class="pill">0</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Torque Y (rad/s impulse)</span>
+              <input id="torqueY" type="range" min="0" max="20" value="0" step="0.5" />
+              <span id="torqueYVal" class="pill">0</span>
+            </div>
+
+            <div class="row">
+              <span class="label">Torque Z (rad/s impulse)</span>
+              <input id="torqueZ" type="range" min="0" max="20" value="0" step="0.5" />
+              <span id="torqueZVal" class="pill">0</span>
+            </div>
+
+            <div class="row">
+              <button id="applyTorque" style="width: 100%; background: #06b6d4;">Apply Angular Impulse</button>
+            </div>
+            <div class="row">
+              <button id="stopRotation" style="width: 100%; background: #ef4444;">Stop Rotation</button>
             </div>
           </div>
         </div>
@@ -235,6 +273,7 @@
             <option value="cubeSoft">Cube Soft (Volume)</option>
             <option value="sphere">Sphere</option>
             <option value="puck">Puck (torus)</option>
+            <option value="puckCylinder">Hockey Puck (cylinder)</option>
             <option value="cone">Cone</option>
             <option value="custom">Custom GLB</option>
           </select>
@@ -296,12 +335,6 @@
         </div>
         
         <div class="row">
-          <span class="label">Ground Threshold</span>
-          <input id="softGroundThreshold" type="range" min="5" max="50" value="15" step="1" />
-          <span id="softGroundThresholdVal" class="pill">0.15</span>
-        </div>
-        
-        <div class="row">
           <p style="font-size: 10px; color: #999; margin: 0;">Higher subdivision = more contacts (9×9×9 = 729 nodes)</p>
         </div>
       </div>
@@ -327,7 +360,57 @@
         </div>
         </div>
       </div>
-      
+
+      <!-- Variant Ground -->
+      <div class="section">
+        <div class="section-title cyan collapsible" data-target="variantGroundDetails">
+          <span class="toggle-icon">▶</span> Variant Ground
+        </div>
+        <div id="variantGroundDetails" class="section-details" style="display:none;">
+        <div class="row">
+          <label class="file-upload-btn" for="loadGroundGLB">📦 Load Ground GLB</label>
+          <input id="loadGroundGLB" type="file" accept=".glb,.gltf" style="display:none;" />
+          <button id="removeVariantGround" class="save-btn" disabled style="margin-left: 5px;">Remove</button>
+        </div>
+
+        <div class="row" id="variantGroundSelectRow" style="display:none;">
+          <span class="label">Material Variant</span>
+          <select id="variantGroundSelect">
+            <option value="0">Variant 1</option>
+          </select>
+        </div>
+
+        <div class="row">
+          <span class="label">Scale</span>
+          <input id="variantGroundScale" type="range" min="1" max="10000" value="100" step="1" />
+          <span id="variantGroundScaleVal" class="pill">1.00x</span>
+        </div>
+
+        <div class="row">
+          <span class="label">Blend Smoothness</span>
+          <input id="variantSmoothness" type="range" min="0" max="1" value="0.5" step="0.01" />
+          <span id="variantSmoothnessVal" class="pill">0.50</span>
+        </div>
+
+        <div class="row">
+          <span class="label">Blend Contrast</span>
+          <input id="variantContrast" type="range" min="0.1" max="3" value="1" step="0.01" />
+          <span id="variantContrastVal" class="pill">1.00</span>
+        </div>
+
+        <div class="row">
+          <label><input type="checkbox" id="variantInvert" /> Invert Blend</label>
+        </div>
+
+        <div class="row">
+          <div style="font-size: 10px; color: #7a8a9e; margin-top: 4px; line-height: 1.4;">
+            <div><strong>Variants:</strong> <span id="variantCountDisplay">0</span></div>
+            <div id="variantNamesList" style="margin-top: 2px; padding-left: 8px; max-height: 60px; overflow-y: auto;"></div>
+          </div>
+        </div>
+        </div>
+      </div>
+
       <!-- Ground Stamping -->
       <div class="section">
         <div class="section-title orange collapsible" data-target="groundStampingDetails">
@@ -355,38 +438,20 @@
         </div>
       </div>
 
-      <!-- Wear Simulation -->
+      <!-- Ground Wear Simulation -->
       <div class="section">
         <div class="section-title cyan collapsible" data-target="wearSimulationDetails">
-          <span class="toggle-icon">▼</span> Wear Simulation
+          <span class="toggle-icon">▼</span> Ground Wear Simulation
         </div>
         <div id="wearSimulationDetails" class="section-details">
         <div class="row">
-          <label><input type="checkbox" id="useEnergyModel" /> Energy-Based Wear Model</label>
+          <span class="label">Wear Coefficient (K)</span>
+          <input id="wearK" type="range" min="1" max="100" value="15" step="1" />
+          <span id="wearKVal" class="pill">0.15</span>
         </div>
 
-        <div class="row">
-          <span class="label">Wear Intensity</span>
-          <input id="wearIntensity" type="range" min="1" max="100" value="15" step="1" />
-          <span id="wearIntensityVal" class="pill">0.15</span>
-        </div>
-
-        <div class="row" id="energyModelInfo" style="display:none;">
-          <span class="label" style="font-size: 11px; color: #6b7280; min-width: 100%;">
-            Energy model uses friction coefficient from Physics Parameters
-          </span>
-        </div>
-
-        <div class="row" id="energyModelParams1" style="display:none;">
-          <span class="label">Hardness (GPa)</span>
-          <input id="hardness" type="range" min="0.1" max="10" value="1" step="0.1" />
-          <span id="hardnessVal" class="pill">1.0 GPa</span>
-        </div>
-
-        <div class="row" id="energyModelParams2" style="display:none;">
-          <span class="label">Wear Coeff (K_E)</span>
-          <input id="wearCoeff" type="range" min="0.0001" max="0.01" value="0.001" step="0.0001" />
-          <span id="wearCoeffVal" class="pill">0.0010</span>
+        <div class="row" style="font-size: 11px; color: #7a8a9e;">
+          Uses friction coefficient (μ) from Physics Parameters
         </div>
 
         <div class="row">
@@ -394,8 +459,97 @@
           <button id="saveFlow" class="save-btn">Export Wear Map</button>
         </div>
         <div class="row">
-          <label><input type="checkbox" id="showFlowOverlay" checked /> Show Wear Overlay</label>
+          <label><input type="checkbox" id="showFlowOverlay" checked /> Show Ground Wear Overlay</label>
         </div>
+        <div class="row">
+          <span class="label">Display Mode</span>
+          <select id="wearDisplayMode">
+            <option value="hsva">HSVA (Direction + Wear)</option>
+            <option value="rgba">RGBA (4-Channel Encoding)</option>
+          </select>
+        </div>
+        </div>
+      </div>
+
+      <!-- Sliding Distance Analysis -->
+      <div class="section">
+        <div class="section-title purple collapsible" data-target="slidingDistDetails">
+          <span class="toggle-icon">▶</span> Sliding Distance Analysis
+        </div>
+        <div id="slidingDistDetails" class="section-details" style="display:none;">
+          <div class="row">
+            <label><input type="checkbox" id="showSlidingOverlay" /> Show Sliding Distance Overlay</label>
+          </div>
+
+          <div class="row">
+            <span class="label">Sliding K Factor</span>
+            <input id="slidingKFactor" type="range" min="0.01" max="5.0" value="0.15" step="0.01" />
+            <span id="slidingKFactorVal" class="pill">0.15</span>
+          </div>
+
+          <div class="row">
+            <button id="clearSlidingDist" class="btn-small">Clear Sliding Distance</button>
+          </div>
+
+          <div class="row">
+            <span class="label-info">
+              Max Accumulated: <span id="maxSlidingDistDisplay" class="pill">—</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Wear Map Normalization -->
+      <div class="section">
+        <div class="section-title orange collapsible" data-target="wearNormDetails">
+          <span class="toggle-icon">▶</span> Wear Map Normalization (RGBA Mode)
+        </div>
+        <div id="wearNormDetails" class="section-details" style="display:none;">
+          <div class="row">
+            <span class="label-info" style="font-size: 0.85em; color: #888;">Note: Controls below only apply when Display Mode is set to "RGBA (4-Channel Encoding)"</span>
+          </div>
+          <div class="row">
+            <span class="label">Wear K Factor</span>
+            <input id="wearK" type="range" min="1" max="100" value="15" step="1" />
+            <span id="wearKVal" class="pill">0.15</span>
+          </div>
+
+          <!-- Normalization ranges for RGB encoding -->
+          <div class="row">
+            <span class="label">Max Velocity (m/s)</span>
+            <input id="maxVelocityNorm" type="range" min="0.5" max="10" value="2" step="0.1" />
+            <span id="maxVelocityNormVal" class="pill">2.0 m/s</span>
+          </div>
+
+          <div class="row">
+            <span class="label">Max Traction Force (N)</span>
+            <input id="maxTractionNorm" type="range" min="1" max="100" value="20" step="1" />
+            <span id="maxTractionNormVal" class="pill">20 N</span>
+          </div>
+
+          <div class="row">
+            <span class="label">Max Sliding Distance (m)</span>
+            <input id="maxSlidingNorm" type="range" min="0.1" max="50" value="10" step="0.1" />
+            <span id="maxSlidingNormVal" class="pill">10 m</span>
+          </div>
+
+          <!-- Display current maximums -->
+          <div class="row">
+            <span class="label-info">Current Max Velocity: <span id="currentMaxVel" class="pill">—</span></span>
+          </div>
+          <div class="row">
+            <span class="label-info">Current Max Traction: <span id="currentMaxTraction" class="pill">—</span></span>
+          </div>
+          <div class="row">
+            <span class="label-info">Current Max Sliding: <span id="currentMaxSliding" class="pill">—</span></span>
+          </div>
+          <div class="row">
+            <span class="label-info">Max Wear (R×G×B): <span id="maxWearDisplay" class="pill">—</span></span>
+          </div>
+
+          <div class="row">
+            <button id="clearWear" class="btn-small">Clear Wear Data</button>
+          </div>
         </div>
       </div>
 
@@ -421,12 +575,20 @@
       <canvas id="pip4Canvas" width="256" height="256"></canvas>
     </div>
     <div id="pip5" class="pip">
-      <div class="pip-label">Pressure Map</div>
+      <div class="pip-label">Instant Tangential Traction (N/m²)</div>
       <canvas id="pip5Canvas" width="256" height="256"></canvas>
     </div>
     <div id="pip6" class="pip">
-      <div class="pip-label">Wear Intensity</div>
+      <div class="pip-label">PiP6: Accumulated Sliding Distance (Ground Canvas) | Max: <span id="pip6MaxDist">—</span></div>
       <canvas id="pip6Canvas" width="256" height="256"></canvas>
+    </div>
+    <div id="pip7" class="pip">
+      <div class="pip-label">Local Sliding Distance (HSV) | Max: <span id="pip7MaxDist">—</span></div>
+      <canvas id="pip7Canvas" width="256" height="256"></canvas>
+    </div>
+    <div id="pip8" class="pip">
+      <div class="pip-label">Local Wear Map | Max: <span id="pip8MaxWear">—</span></div>
+      <canvas id="pip8Canvas" width="256" height="256"></canvas>
     </div>
   </div>
 

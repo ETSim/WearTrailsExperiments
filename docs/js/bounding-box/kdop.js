@@ -1,6 +1,6 @@
 // KDOP (K-Discrete Oriented Polytope) Algorithm
 
-import { projectBBox } from './utils.js';
+import { projectBBox, wrapToPi } from './utils.js';
 
 export function computeKDOP(pts, k, CFG, computeAABB) {
   if (pts.length < 2) return computeAABB(pts, CFG);
@@ -9,9 +9,9 @@ export function computeKDOP(pts, k, CFG, computeAABB) {
   let bestBox = null;
   
   for (let i = 0; i < k; i++) {
-    const theta = Math.PI * i / k;
+    const theta = wrapToPi(Math.PI * i / k);
     const bbox = projectBBox(pts, theta);
-    
+
     if (bbox.area < bestArea) {
       bestArea = bbox.area;
       bestBox = {

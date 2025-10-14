@@ -5,6 +5,7 @@ import { makeCube } from './bodies/cube.js';
 import { makeCubeSoft } from './bodies/cube-soft.js';
 import { makeSphere } from './bodies/sphere.js';
 import { makePuck } from './bodies/puck.js';
+import { makePuckCylinder } from './bodies/puck-cylinder.js';
 import { makeCone } from './bodies/cone.js';
 import { makeCustomBody } from './bodies/custom.js';
 import { makeConvexTriangleMeshShapeFromGeometry } from './bodies/utils.js';
@@ -276,6 +277,8 @@ export class BodyManager {
       made = makeSphere(...params, this.generateRandomCubeTexture);
     } else if (this.shapeType === 'puck') {
       made = makePuck(...params, (geom) => makeConvexTriangleMeshShapeFromGeometry(geom, this.A), this.generateRandomCubeTexture);
+    } else if (this.shapeType === 'puckCylinder') {
+      made = makePuckCylinder(...params, (geom) => makeConvexTriangleMeshShapeFromGeometry(geom, this.A), this.generateRandomCubeTexture);
     } else if (this.shapeType === 'cone') {
       made = makeCone(...params, (geom) => makeConvexTriangleMeshShapeFromGeometry(geom, this.A), this.generateRandomCubeTexture);
     } else if (this.shapeType === 'cube10') {
@@ -374,7 +377,16 @@ export class BodyManager {
       this.dynBody.setWorldTransform(tr);
       this.dynBody.getMotionState().setWorldTransform(tr);
       this.dynBody.setLinearVelocity(new this.A.btVector3(this.speedX, 0, this.speedZ));
-      this.dynBody.setAngularVelocity(new this.A.btVector3(0, 0, 0));
+
+      // Apply stored angular velocity (torque) values from state if available
+      let angVelX = 0, angVelY = 0, angVelZ = 0;
+      if (typeof window !== 'undefined' && window.state) {
+        angVelX = window.state.torqueX || 0;
+        angVelY = window.state.torqueY || 0;
+        angVelZ = window.state.torqueZ || 0;
+      }
+      this.dynBody.setAngularVelocity(new this.A.btVector3(angVelX, angVelY, angVelZ));
+
       this.dynBody.clearForces();
       this.dynBody.activate();
       this.dynMesh.position.set(x, y, z);

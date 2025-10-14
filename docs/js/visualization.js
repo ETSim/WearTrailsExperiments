@@ -89,6 +89,15 @@ export function updateContactPoints(contactPointsGroup, samples, showContacts, C
 
   if (!showContacts || samples.length === 0) return;
 
+  // Check if synthetic augmentation is enabled
+  const enableSynthetic = (typeof window !== 'undefined') ?
+    (window.state?.enableSynthetic !== false) : true;
+
+  // Filter samples based on synthetic flag
+  const filteredSamples = enableSynthetic ? samples : samples.filter(pt => !pt.isSynthetic);
+
+  if (filteredSamples.length === 0) return;
+
   // Separate geometry for real and synthetic contacts
   const realGeom = new THREE.SphereGeometry(CFG.CONTACT_POINT_SIZE, 12, 12);
   const syntheticGeom = new THREE.SphereGeometry(CFG.CONTACT_POINT_SIZE * 0.8, 8, 8); // Slightly smaller
@@ -113,7 +122,7 @@ export function updateContactPoints(contactPointsGroup, samples, showContacts, C
     opacity: 0.7         // Semi-transparent to distinguish
   });
 
-  for (const pt of samples) {
+  for (const pt of filteredSamples) {
     // Choose geometry and material based on whether contact is synthetic
     const isSynthetic = pt.isSynthetic === true;
     const geom = isSynthetic ? syntheticGeom : realGeom;

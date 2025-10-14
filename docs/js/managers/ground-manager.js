@@ -49,6 +49,7 @@ export class GroundManager {
     this.ground.rotation.x = -Math.PI / 2;
     this.ground.position.y = 0.00;
     this.ground.receiveShadow = true;
+    this.ground.visible = true; // Ensure ground is visible at startup
     this.scene.add(this.ground);
 
     // Ground physics body - SINGLE GROUND PLANE

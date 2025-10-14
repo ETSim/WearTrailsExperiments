@@ -1,6 +1,6 @@
 // Hybrid Algorithm (Quantized + Quantile)
 
-import { rotatePoints2D, projectBBox } from './utils.js';
+import { rotatePoints2D, projectBBox, wrapToPi } from './utils.js';
 
 export function computeHybrid(pts, k = 16, quantile = 0.05, CFG, computeAABB) {
   if (pts.length < 2) return computeAABB(pts, CFG);
@@ -9,7 +9,7 @@ export function computeHybrid(pts, k = 16, quantile = 0.05, CFG, computeAABB) {
   let bestArea = Infinity;
   
   for (let i = 0; i < k; i++) {
-    const theta = Math.PI * i / k;
+    const theta = wrapToPi(Math.PI * i / k);
     const bbox = projectBBox(pts, theta);
     if (bbox.area < bestArea) {
       bestArea = bbox.area;

@@ -1,7 +1,9 @@
-// PiP 5 - Pressure Map with Grayscale Encoding
-// Shows accumulated normal force (impact pressure) over time and repetition
-// Uses grayscale encoding: 0 (black) = no pressure, 1 (white) = max pressure strength
-// No decay - accumulates contact time and repetition
+// PiP 5 - Instant Tangential Contact Traction Map
+// Shows instantaneous tangential traction (local shear stress) - NO ACCUMULATION
+// Traction: τ = μ × σ_n (shear stress = friction coefficient × normal pressure)
+// Units: N/m² (Pascals)
+// Uses grayscale encoding: 0 (black) = no traction, 1 (white) = max traction
+// Instant visualization - shows current contact state only
 // Works with both rigid and soft bodies
 
 export class PiP5 {
@@ -9,15 +11,10 @@ export class PiP5 {
     this.pipRenderer = pipRenderer;
     this.canvasCtx = document.getElementById('pip5Canvas').getContext('2d', { willReadFrequently: true });
     this.density = 1.0; // kg/m² - surface density
+    this.frictionCoefficient = 0.5; // μ - friction coefficient for traction calculation
 
-    // Pressure accumulation for time and repetition tracking (no decay)
-    const W = this.pipRenderer.CFG.PIP_W;
-    const H = this.pipRenderer.CFG.PIP_H;
-    this.pressureAccumulation = new Float32Array(W * H);
-    this.pressureAlpha = 0.1; // Accumulation factor per frame
-
-    // Adaptive threshold (only increases, never decreases)
-    this.maxPressureThreshold = 0.01;
+    // Adaptive threshold for normalization
+    this.maxTractionThreshold = 1.0;
   }
 
   /**
@@ -31,14 +28,28 @@ export class PiP5 {
     };
   }
 
+
   /**
-   * Accumulate pressure over time and contact repetition (no decay)
+   * Render instant tangential traction map with grayscale encoding
+   * 0 (black) = no traction, 1 (white) = maximum traction strength
+   * Only displays instant traction within current intersection area - NO ACCUMULATION
    */
-  accumulate(pixels1, pixels2, velocity, angularVelocity, lastOBB) {
+  render(pixels1, pixels2, velocity, angularVelocity, normalForce, lastOBB) {
     const W = this.pipRenderer.CFG.PIP_W;
     const H = this.pipRenderer.CFG.PIP_H;
 
+    // Clear canvas
+    this.canvasCtx.clearRect(0, 0, W, H);
+
     if (!velocity || !lastOBB) {
+      return;
+    }
+
+    // Get friction coefficient from physics simulation
+    const mu = window.bodyManager ? window.bodyManager.friction : 0.5;
+
+    // No traction if no friction
+    if (mu <= 0) {
       return;
     }
 
@@ -52,7 +63,35 @@ export class PiP5 {
     // Contact plane normal (ground plane: pointing up)
     const normal = { x: 0, y: 1, z: 0 };
 
-    // Process each pixel
+    // FIRST PASS: Count intersection pixels to calculate contact area
+    let intersectionPixelCount = 0;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const pixelIdx = (y * W + x) * 4;
+        const has1 = (pixels1[pixelIdx] | pixels1[pixelIdx+1] | pixels1[pixelIdx+2]) > 10;
+        const has2 = (pixels2[pixelIdx] | pixels2[pixelIdx+1] | pixels2[pixelIdx+2]) > 10;
+        if (has1 && has2) {
+          intersectionPixelCount++;
+        }
+      }
+    }
+
+    // Calculate contact area in world units
+    const pixelAreaWorld = (width * height) / (W * H);
+    const contactArea = intersectionPixelCount * pixelAreaWorld;
+
+    // Calculate unified static pressure: P = F / A
+    const pressure = contactArea > 0.001 ? (normalForce || 0) / contactArea : 0;
+
+    // Create output image
+    const outputData = this.canvasCtx.createImageData(W, H);
+
+    // Track max traction for normalization
+    let maxTractionThisFrame = 0.01;
+
+    // SECOND PASS: calculate all tractions and find max
+    const tractionMap = new Float32Array(W * H);
+
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
         const idx = y * W + x;
@@ -68,7 +107,6 @@ export class PiP5 {
           const v = (y / H) - 0.5;
 
           // Calculate world space position of this pixel
-          // Position = center + u * width * e1 + v * height * e2
           const worldX = center.x + u * width * e1.x + v * height * e2.x;
           const worldZ = center.z + u * width * e1.z + v * height * e2.z;
 
@@ -95,91 +133,57 @@ export class PiP5 {
           // Calculate normal component: v · n
           const v_dot_n = v_3d.x * normal.x + v_3d.y * normal.y + v_3d.z * normal.z;
 
-          // Calculate normal force (impact pressure): f_n = 0.5 * ρ * max(0, v · n)²
-          const v_normal = Math.max(0, v_dot_n);
-          const f_normal = 0.5 * this.density * v_normal * v_normal;
+          // Project to tangent plane: v_tangential = v - (v · n) * n
+          const v_tangential = {
+            x: v_3d.x - v_dot_n * normal.x,
+            y: v_3d.y - v_dot_n * normal.y,
+            z: v_3d.z - v_dot_n * normal.z
+          };
 
-          // Accumulate pressure over time - NO DECAY
-          // Tracks contact duration and repetition
-          this.pressureAccumulation[idx] += this.pressureAlpha * f_normal;
+          // Calculate tangential velocity magnitude (sliding velocity)
+          const v_tangential_mag = Math.sqrt(
+            v_tangential.x * v_tangential.x +
+            v_tangential.z * v_tangential.z
+          );
+
+          // Calculate tangential traction using unified pressure model
+          // τ = μ × p, where p = F / A (static pressure from solver)
+          const tangential_traction = mu * pressure;
+
+          // Only show if there's actual tangential motion
+          if (v_tangential_mag > 0.001 && tangential_traction > 0.001) {
+            tractionMap[idx] = tangential_traction;
+            if (tangential_traction > maxTractionThisFrame) {
+              maxTractionThisFrame = tangential_traction;
+            }
+          }
         }
       }
     }
-  }
 
-  /**
-   * Render pressure map with grayscale encoding
-   * 0 (black) = no pressure, 1 (white) = maximum pressure strength
-   * Only displays pressure within current intersection area
-   */
-  render(pixels1, pixels2, velocity, angularVelocity, lastOBB) {
-    const W = this.pipRenderer.CFG.PIP_W;
-    const H = this.pipRenderer.CFG.PIP_H;
-
-    // Clear canvas
-    this.canvasCtx.clearRect(0, 0, W, H);
-
-    if (!velocity || !lastOBB) {
-      return;
-    }
-
-    // Update adaptive threshold (only increases, never decreases)
-    // This prevents existing pixels from dimming as new pressure accumulates
-    let currentMaxPressure = 0.01;
-    for (let i = 0; i < this.pressureAccumulation.length; i++) {
-      if (this.pressureAccumulation[i] > currentMaxPressure) {
-        currentMaxPressure = this.pressureAccumulation[i];
-      }
-    }
-
-    // Only increase threshold, never decrease (prevents dimming)
-    if (currentMaxPressure > this.maxPressureThreshold) {
-      this.maxPressureThreshold = currentMaxPressure;
-    }
-
-    // Create output image
-    const outputData = this.canvasCtx.createImageData(W, H);
-
-    // Process each pixel - only render within intersection area
+    // Second pass: render with normalization
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
         const idx = y * W + x;
         const pixelIdx = idx * 4;
 
-        // Check if pixel is in current intersection (REQUIRED)
-        const has1 = (pixels1[pixelIdx] | pixels1[pixelIdx+1] | pixels1[pixelIdx+2]) > 10;
-        const has2 = (pixels2[pixelIdx] | pixels2[pixelIdx+1] | pixels2[pixelIdx+2]) > 10;
+        const traction = tractionMap[idx];
 
-        // Only render pressure within active intersection area
-        if (has1 && has2) {
-          // Get accumulated pressure
-          const pressure = this.pressureAccumulation[idx];
+        if (traction > 0.001) {
+          // Normalize to 0-1 range
+          const normalizedTraction = Math.min(1.0, traction / maxTractionThisFrame);
 
-          if (pressure > 0.001) {
-            // Logarithmic scaling for better dynamic range
-            // Prevents old pixels from dimming as new pressure accumulates
-            const normalizedPressure = Math.min(1.0,
-              Math.log(1 + pressure * 100) / Math.log(1 + this.maxPressureThreshold * 100)
-            );
+          // Grayscale encoding: brightness = traction strength
+          // 0 (black) = no traction, 1 (white) = maximum traction
+          const grayValue = Math.round(normalizedTraction * 255);
 
-            // Grayscale encoding: brightness = pressure strength
-            // 0 (black) = no pressure, 1 (white) = maximum pressure
-            const grayValue = Math.round(normalizedPressure * 255);
-
-            // Write grayscale to RGB channels
-            outputData.data[pixelIdx] = grayValue;
-            outputData.data[pixelIdx + 1] = grayValue;
-            outputData.data[pixelIdx + 2] = grayValue;
-            outputData.data[pixelIdx + 3] = 255; // Full opacity
-          } else {
-            // Transparent
-            outputData.data[pixelIdx] = 0;
-            outputData.data[pixelIdx + 1] = 0;
-            outputData.data[pixelIdx + 2] = 0;
-            outputData.data[pixelIdx + 3] = 0;
-          }
+          // Write grayscale to RGB channels
+          outputData.data[pixelIdx] = grayValue;
+          outputData.data[pixelIdx + 1] = grayValue;
+          outputData.data[pixelIdx + 2] = grayValue;
+          outputData.data[pixelIdx + 3] = 255; // Full opacity
         } else {
-          // Transparent outside intersection area
+          // Transparent
           outputData.data[pixelIdx] = 0;
           outputData.data[pixelIdx + 1] = 0;
           outputData.data[pixelIdx + 2] = 0;
@@ -194,9 +198,5 @@ export class PiP5 {
 
   clear() {
     this.canvasCtx.clearRect(0, 0, this.pipRenderer.CFG.PIP_W, this.pipRenderer.CFG.PIP_H);
-    // Clear pressure accumulation
-    this.pressureAccumulation.fill(0);
-    // Reset adaptive threshold
-    this.maxPressureThreshold = 0.01;
   }
 }
